@@ -1,0 +1,12 @@
+# Windows / PC
+PySide6>=6.5
+opencv-python-headless>=4.6
+numpy>=1.24
+scikit-learn>=1.2
+joblib>=1.2
+onnxruntime>=1.16        # inferensi model YOLO (ONNX)
+
+# Opsional, hanya untuk MELATIH model YOLO26n-cls (disarankan di PC):
+# ultralytics>=8.4
+
+# Raspberry Pi: lihat README.md (disarankan install lewat apt)
