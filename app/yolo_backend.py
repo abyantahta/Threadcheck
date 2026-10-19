@@ -71,8 +71,11 @@ class YoloRunner:
         else:
             self.net.setInput(x)
             outs = self.net.forward(self.net.getUnconnectedOutLayersNames())
-        probs = np.asarray(outs[0][0], dtype=np.float64)
-        embed = np.asarray(outs[1][0], dtype=np.float64) if len(outs) > 1 else None
+        # urutan keluaran OpenCV DNN berbeda antar versi (mis. di Raspberry Pi), jadi pilih
+        # berdasarkan ukuran: probabilitas (jumlah kelas) selalu lebih kecil dari embedding
+        outs = sorted((np.asarray(o, dtype=np.float64).reshape(-1) for o in outs), key=len)
+        probs = outs[0]
+        embed = outs[1] if len(outs) > 1 else None
         return float(probs[self.ok_index]), embed
 
 

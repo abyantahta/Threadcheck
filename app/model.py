@@ -101,7 +101,12 @@ class ModelManager:
             prob, embed = yolo.run(roi)
         except Exception:
             return None, None
-        ratio = nov.ratio(embed) if (nov is not None and embed is not None) else None
+        ratio = None
+        if nov is not None and embed is not None:
+            try:
+                ratio = nov.ratio(embed)
+            except Exception:   # embedding tidak cocok dengan model -> penolak objek asing dilewati
+                ratio = None
         return prob, ratio
 
     def summary(self) -> str:
