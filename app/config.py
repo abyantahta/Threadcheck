@@ -72,6 +72,16 @@ class AppConfig:
     novelty_tolerance: float = 1.0         # toleransi "objek tidak dikenal" ML (0 = nonaktif)
     continuous_smoothing: int = 5          # jumlah frame untuk menghaluskan tampilan kontinu
 
+    # --- Output GPIO (Raspberry Pi, nomor BCM) ---
+    gpio_ok_enabled: bool = False          # nyalakan pin saat hasil inspeksi OK
+    gpio_ok_pin: int = 17
+    gpio_ok_active_high: bool = True       # True = 3,3 V saat OK; False = 0 V saat OK
+    gpio_ok_pulse_ms: int = 500            # 0 = pin tetap menyala selama hasil masih OK
+    gpio_ng_enabled: bool = False          # nyalakan pin saat hasil inspeksi NG
+    gpio_ng_pin: int = 27
+    gpio_ng_active_high: bool = True
+    gpio_ng_pulse_ms: int = 500            # 0 = pin tetap menyala selama hasil masih NG
+
     # --- Penyimpanan ---
     save_ng_images: bool = True
     save_ok_images: bool = False

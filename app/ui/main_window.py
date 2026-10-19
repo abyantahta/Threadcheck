@@ -257,6 +257,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.inspect.on_fps(fps)
 
     def _on_config(self, cfg):
+        self.ctx.gpio.apply_config(cfg)
         self.inspect.on_config(cfg)
         if cfg.view_mode != self._view_mode:
             self._view_mode = cfg.view_mode
@@ -284,6 +285,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.training._train is not None:
             self.training._train.cancel()
             self.training._train.wait(5000)
+        self.ctx.gpio.close()
         self.ctx.flush()
         super().closeEvent(e)
 

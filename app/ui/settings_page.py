@@ -32,6 +32,41 @@ def _form():
     return f
 
 
+def _gpio_column(result, enabled, pin, active_high, pulse_ms):
+    """Satu kolom pengaturan pin untuk hasil OK atau NG."""
+    box = QtWidgets.QWidget()
+    lay = QtWidgets.QVBoxLayout(box)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(8)
+    lay.addWidget(label(f"HASIL {result}", "cardTitle"))
+    chk = QtWidgets.QCheckBox(f"Nyalakan GPIO ketika hasil {result}")
+    chk.setChecked(enabled)
+    lay.addWidget(chk)
+    form = _form()
+    sp_pin = _spin(2, 27, pin, 1)
+    sp_pin.setToolTip(f"Nomor pin BCM untuk hasil {result}.")
+    cb = QtWidgets.QComboBox()
+    cb.addItem(f"Aktif HIGH (3,3 V saat {result})", True)
+    cb.addItem(f"Aktif LOW (0 V saat {result})", False)
+    cb.setCurrentIndex(0 if active_high else 1)
+    sp_ms = _spin(0, 5000, pulse_ms, 50, " ms")
+    sp_ms.setSpecialValueText(f"tahan selama {result}")
+    sp_ms.setToolTip(f"Lama pin menyala setiap hasil {result}. 0 = tetap menyala selama hasil {result}.")
+    form.addRow(label("Pin BCM", "muted"), sp_pin)
+    form.addRow(label("Level aktif", "muted"), cb)
+    form.addRow(label("Durasi pulsa", "muted"), sp_ms)
+    lay.addLayout(form)
+    btn = button(f"Uji nyala {result}", tooltip=f"Nyalakan pin {result} sebentar untuk mencoba kabel")
+    row = QtWidgets.QHBoxLayout()
+    row.addWidget(btn)
+    row.addStretch(1)
+    lay.addLayout(row)
+    lbl = label("", "status", wrap=True)
+    lay.addWidget(lbl)
+    lay.addStretch(1)
+    return box, chk, sp_pin, cb, sp_ms, btn, lbl
+
+
 def _spin(lo, hi, val, step=1, suffix="", decimals=None):
     if decimals is None:
         s = QtWidgets.QSpinBox()
@@ -269,6 +304,35 @@ class SettingsPage(QtWidgets.QWidget):
         dec.body.addStretch(1)
         grid.addWidget(dec, 2, 1)
 
+        # ================= Output GPIO =================
+        gpio = Card("Output GPIO")
+        gpio.body.addWidget(label(
+            "Hasil OK dan NG masing-masing bisa menyalakan pin Raspberry Pi (nomor BCM) yang berbeda. "
+            "Pulsa cocok untuk lampu atau PLC. Isi 0 agar pin tetap menyala selama hasil itu masih aktif. "
+            "Lubang tidak terdeteksi ikut menyalakan pin NG. "
+            "Di PC Windows aturan hanya disimpan dan baru menggerakkan pin di Raspberry Pi. "
+            "Untuk tegangan 24 V gunakan optocoupler atau relay.",
+            "hint", wrap=True))
+        cols = QtWidgets.QHBoxLayout()
+        cols.setSpacing(24)
+        (ok_box, self.chk_gpio, self.sp_gpio_pin, self.cb_gpio_level, self.sp_gpio_ms,
+         self.btn_gpio_test, self.lbl_gpio) = _gpio_column(
+            "OK", cfg.gpio_ok_enabled, cfg.gpio_ok_pin, cfg.gpio_ok_active_high, cfg.gpio_ok_pulse_ms)
+        (ng_box, self.chk_gpio_ng, self.sp_gpio_ng_pin, self.cb_gpio_ng_level, self.sp_gpio_ng_ms,
+         self.btn_gpio_ng_test, self.lbl_gpio_ng) = _gpio_column(
+            "NG", cfg.gpio_ng_enabled, cfg.gpio_ng_pin, cfg.gpio_ng_active_high, cfg.gpio_ng_pulse_ms)
+        cols.addWidget(ok_box, 1)
+        cols.addWidget(ng_box, 1)
+        gpio.body.addLayout(cols)
+        for w in (self.chk_gpio, self.sp_gpio_pin, self.cb_gpio_level, self.sp_gpio_ms,
+                  self.chk_gpio_ng, self.sp_gpio_ng_pin, self.cb_gpio_ng_level, self.sp_gpio_ng_ms):
+            signal = w.toggled if isinstance(w, QtWidgets.QCheckBox) else (
+                w.currentIndexChanged if isinstance(w, QtWidgets.QComboBox) else w.valueChanged)
+            signal.connect(self._sync_gpio)
+        self.btn_gpio_test.clicked.connect(lambda: self._test_gpio("ok"))
+        self.btn_gpio_ng_test.clicked.connect(lambda: self._test_gpio("ng"))
+        grid.addWidget(gpio, 3, 0, 1, 2)
+
         # ================= Penyimpanan =================
         sto = Card("Penyimpanan & log")
         self.chk_ng = QtWidgets.QCheckBox("Simpan gambar hasil NG")
@@ -301,8 +365,8 @@ class SettingsPage(QtWidgets.QWidget):
             f"Sistem: {platform.system()} {platform.machine()}\n"
             f"Folder aplikasi: {BASE_DIR}", "hint", wrap=True))
         info.body.addStretch(1)
-        grid.addWidget(info, 3, 0, 1, 2)
-        grid.setRowStretch(4, 1)
+        grid.addWidget(info, 4, 0, 1, 2)
+        grid.setRowStretch(5, 1)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
 
@@ -312,6 +376,7 @@ class SettingsPage(QtWidgets.QWidget):
 
         self._source_changed()
         self.refresh_profiles()
+        self._show_gpio()
 
     # ------------------------------------------------------------------
     def refresh_profiles(self):
@@ -341,6 +406,8 @@ class SettingsPage(QtWidgets.QWidget):
                    self.sp_angle, self.sp_search, self.sp_contrast, self.sp_pitch_tol, self.sp_rmin,
                    self.sp_rmax, self.sp_hough, self.sp_in, self.sp_out, self.sp_proc, self.cb_method,
                    self.sp_thr_ml, self.sp_thr_rule, self.sp_novelty, self.sp_trig, self.sp_smooth,
+                   self.chk_gpio, self.sp_gpio_pin, self.cb_gpio_level, self.sp_gpio_ms,
+                   self.chk_gpio_ng, self.sp_gpio_ng_pin, self.cb_gpio_ng_level, self.sp_gpio_ng_ms,
                    self.chk_ng, self.chk_ok, self.chk_log]
         for w in widgets:
             w.blockSignals(True)
@@ -372,6 +439,14 @@ class SettingsPage(QtWidgets.QWidget):
             self.sp_novelty.setValue(cfg.novelty_tolerance)
             self.sp_trig.setValue(cfg.trigger_frames)
             self.sp_smooth.setValue(cfg.continuous_smoothing)
+            self.chk_gpio.setChecked(cfg.gpio_ok_enabled)
+            self.sp_gpio_pin.setValue(cfg.gpio_ok_pin)
+            self.cb_gpio_level.setCurrentIndex(0 if cfg.gpio_ok_active_high else 1)
+            self.sp_gpio_ms.setValue(cfg.gpio_ok_pulse_ms)
+            self.chk_gpio_ng.setChecked(cfg.gpio_ng_enabled)
+            self.sp_gpio_ng_pin.setValue(cfg.gpio_ng_pin)
+            self.cb_gpio_ng_level.setCurrentIndex(0 if cfg.gpio_ng_active_high else 1)
+            self.sp_gpio_ng_ms.setValue(cfg.gpio_ng_pulse_ms)
             self.chk_ng.setChecked(cfg.save_ng_images)
             self.chk_ok.setChecked(cfg.save_ok_images)
             self.chk_log.setChecked(cfg.log_csv)
@@ -381,8 +456,33 @@ class SettingsPage(QtWidgets.QWidget):
         self._source_changed()
         self._view_changed(update=False)
         self._show_calib()
+        self.ctx.gpio.apply_config(cfg)
+        self._show_gpio()
         self.refresh_profiles()
         self._cam_status("Menghubungkan kamera profil…", "warn")
+    def _sync_gpio(self, *_):
+        self.ctx.update(
+            gpio_ok_enabled=self.chk_gpio.isChecked(),
+            gpio_ok_pin=int(self.sp_gpio_pin.value()),
+            gpio_ok_active_high=bool(self.cb_gpio_level.currentData()),
+            gpio_ok_pulse_ms=int(self.sp_gpio_ms.value()),
+            gpio_ng_enabled=self.chk_gpio_ng.isChecked(),
+            gpio_ng_pin=int(self.sp_gpio_ng_pin.value()),
+            gpio_ng_active_high=bool(self.cb_gpio_ng_level.currentData()),
+            gpio_ng_pulse_ms=int(self.sp_gpio_ng_ms.value()),
+        )
+        self._show_gpio()
+
+    def _test_gpio(self, kind):
+        self.ctx.gpio.test(kind)
+        self._show_gpio()
+
+    def _show_gpio(self):
+        for lbl, ch in ((self.lbl_gpio, self.ctx.gpio.ok), (self.lbl_gpio_ng, self.ctx.gpio.ng)):
+            tone, text = ch.status()
+            lbl.setText(text)
+            set_prop(lbl, "tone", tone)
+
     def _show_calib(self):
         pitch = self.ctx.cfg.rule_pitch_px
         if pitch > 0:
