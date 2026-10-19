@@ -42,10 +42,16 @@ def main():
     ctx = AppContext()
     ensure_dirs()
     win = MainWindow(ctx)
-    if "--fullscreen" in sys.argv:
-        win.showFullScreen()
-    else:
-        win.show()
+    # Opsi baris perintah menimpa pengaturan tampilan yang tersimpan:
+    #   --800x480     tata letak ringkas + layar penuh untuk layar Raspberry Pi 800×480
+    #   --fullscreen  layar penuh dengan tata letak normal
+    mode = ctx.cfg.display_mode
+    if "--800x480" in sys.argv:
+        mode = "pi800"
+    elif "--fullscreen" in sys.argv:
+        mode = "fullscreen"
+    win.show()
+    win.apply_display(mode)
     return exec_app(app)
 
 

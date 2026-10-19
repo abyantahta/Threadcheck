@@ -6,12 +6,12 @@
   "camera_height": 1080,
   "camera_file": "",
   "roi": [
-    0.46102941176470597,
-    0.3880174291938998,
-    0.08137254901960794,
-    0.186492374727669
+    0.5225596529284166,
+    0.5366353338153772,
+    0.031236442516269114,
+    0.07712701855868886
   ],
-  "ok_threshold": 0.5,
+  "ok_threshold": 0.6,
   "trigger_frames": 5,
   "novelty_tolerance": 1.0,
   "continuous_smoothing": 5,
@@ -26,6 +26,8 @@
   "save_ng_images": true,
   "save_ok_images": false,
   "log_csv": true,
-  "yolo_epochs": 40,
+  "yolo_epochs": 10,
+  "yolo_early_stop": false,
+  "yolo_patience": 10,
   "inspect_mode": "continuous"
 }

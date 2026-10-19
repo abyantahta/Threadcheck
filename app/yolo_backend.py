@@ -170,7 +170,9 @@ def _make_split_dir(root, items):
             shutil.copy2(path, d / path.name)
 
 
-def _train_once(data_dir, epochs, name, progress, should_stop, p_from, p_to, label):
+def _train_once(data_dir, epochs, name, progress, should_stop, p_from, p_to, label, patience=0):
+    """Latih satu kali. patience > 0 = early stopping (berhenti bila skor validasi tidak membaik
+    selama `patience` epoch). Mengembalikan (model terbaik, info epoch)."""
     from ultralytics import YOLO
 
     from .model import TrainingError
@@ -185,9 +187,16 @@ def _train_once(data_dir, epochs, name, progress, should_stop, p_from, p_to, lab
     model.add_callback("on_train_epoch_end", on_epoch_end)
     model.train(data=str(data_dir), epochs=epochs, imgsz=YOLO_IMGSZ, batch=16, workers=0,
                 project=str(config.models_dir() / "_yolo_work" / "runs"), name=name, exist_ok=True,
-                plots=False, verbose=False, seed=0, patience=epochs, val=True)
+                plots=False, verbose=False, seed=0, patience=patience, val=True)
+    trainer = getattr(model, "trainer", None)
+    stopper = getattr(trainer, "stopper", None)
+    info = {
+        "epochs_run": int(getattr(trainer, "epoch", epochs - 1)) + 1,
+        "best_epoch": int(getattr(stopper, "best_epoch", epochs - 1)) + 1,
+    }
+    info["stopped_early"] = patience > 0 and info["epochs_run"] < epochs
     best = config.models_dir() / "_yolo_work" / "runs" / name / "weights" / "best.pt"
-    return YOLO(str(best)) if best.exists() else model
+    return (YOLO(str(best)) if best.exists() else model), info
 
 
 def finalize_model(yolo, paths):
@@ -202,9 +211,13 @@ def finalize_model(yolo, paths):
             "novelty": fit_novelty(runner, paths)}
 
 
-def train_yolo(epochs=40, progress=lambda pct, msg: None, should_stop=lambda: False):
+def train_yolo(epochs=40, patience=0, progress=lambda pct, msg: None, should_stop=lambda: False):
     """Latih YOLO26n-cls: (1) validasi 80/20 untuk mengukur akurasi & keyakinan,
-    (2) latih model akhir dengan semua data, (3) export ONNX + penolak objek asing."""
+    (2) latih model akhir dengan semua data, (3) export ONNX + penolak objek asing.
+
+    Early stopping (patience > 0) hanya dipakai di tahap validasi, karena hanya di sana ada data
+    uji yang terpisah. Model akhir lalu dilatih sebanyak epoch yang benar-benar dijalankan tahap
+    validasi."""
     from sklearn.metrics import balanced_accuracy_score, confusion_matrix
     from sklearn.model_selection import train_test_split
 
@@ -220,7 +233,8 @@ def train_yolo(epochs=40, progress=lambda pct, msg: None, should_stop=lambda: Fa
 
     # (1) validasi
     _make_split_dir(work / "data_val", {"train": tr, "val": va})
-    m_val = _train_once(work / "data_val", epochs, "val", progress, should_stop, 2, 45, "Validasi")
+    m_val, val_info = _train_once(work / "data_val", epochs, "val", progress, should_stop, 2, 45,
+                                  "Validasi", patience=patience)
     ok_idx = [k for k, v in m_val.names.items() if v == CLASS_OK][0]
     probs, ys, names = [], [], []
     for path, cls in va:
@@ -236,7 +250,9 @@ def train_yolo(epochs=40, progress=lambda pct, msg: None, should_stop=lambda: Fa
     if should_stop():
         raise TrainingError("Training dibatalkan")
     _make_split_dir(work / "data_all", {"train": entries, "val": va})
-    m_final = _train_once(work / "data_all", epochs, "final", progress, should_stop, 45, 88, "Model akhir")
+    final_epochs = max(5, val_info["epochs_run"]) if patience > 0 else epochs
+    m_final, _ = _train_once(work / "data_all", final_epochs, "final", progress, should_stop, 45, 88,
+                             "Model akhir")
 
     # (3) export ONNX + penolak objek asing; simpan bobot PyTorch (untuk export ulang, mis. NCNN)
     progress(90, "Export ONNX & menyiapkan penolak objek tidak dikenal…")
@@ -255,7 +271,8 @@ def train_yolo(epochs=40, progress=lambda pct, msg: None, should_stop=lambda: Fa
         "cv_accuracy": float((pred == ys).mean()),
         "cv_balanced_accuracy": float(balanced_accuracy_score(ys, pred)),
         "cv_confident": float((conf_true >= 0.8).mean()),
-        "epochs": epochs,
+        "epochs": final_epochs,
+        "early_stopping": {"patience": patience, "max_epochs": epochs, **val_info} if patience > 0 else None,
     }
     report = {
         "meta": meta,

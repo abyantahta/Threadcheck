@@ -209,6 +209,27 @@ QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
 QMessageBox, QInputDialog, QFileDialog {{ background: {C['surface']}; }}
+
+/* ---------- Mode ringkas (layar 800x480) ---------- */
+QWidget#Root[compact="true"] QLabel#AppTitle {{ font-size: 15px; }}
+QWidget#Root[compact="true"] QLabel[chip="true"] {{ padding: 2px 8px; font-size: 11px; border-radius: 10px; }}
+QWidget#Root[compact="true"] QComboBox#ProfileCombo {{ padding: 2px 24px 2px 8px; font-size: 12px; }}
+QWidget#Root[compact="true"] QLabel#JudgeText {{ font-size: 40px; letter-spacing: 2px; }}
+QWidget#Root[compact="true"] QLabel#JudgeSub {{ font-size: 11px; }}
+QWidget#Root[compact="true"] QLabel#StatValue {{ font-size: 16px; }}
+QWidget#Root[compact="true"] QLabel#StatTitle {{ font-size: 9px; }}
+QWidget#Root[compact="true"] QLabel[role="cardTitle"] {{ font-size: 10px; }}
+QWidget#Root[compact="true"] QLabel[role="hint"] {{ font-size: 10px; }}
+QWidget#Root[compact="true"] QLabel[role="value"] {{ font-size: 12px; }}
+QWidget#Root[compact="true"] QPushButton {{ padding: 5px 8px; font-size: 12px; }}
+QWidget#Root[compact="true"] QPushButton[size="xl"] {{ font-size: 14px; padding: 8px; }}
+QWidget#Root[compact="true"] QPushButton[size="lg"] {{ font-size: 12px; padding: 6px; }}
+QWidget#Root[compact="true"] QPushButton[segment="true"] {{ padding: 5px 6px; }}
+QWidget#Root[compact="true"] QPushButton[nav="true"][collapsed="true"] {{ padding: 8px 0px; font-size: 15px; }}
+QWidget#Root[compact="true"] QComboBox, QWidget#Root[compact="true"] QSpinBox,
+QWidget#Root[compact="true"] QDoubleSpinBox, QWidget#Root[compact="true"] QLineEdit {{ padding: 3px 6px; }}
+QWidget#Root[compact="true"] QFrame#Card {{ border-radius: 8px; }}
+QWidget#Root[compact="true"] QFrame#Judgement {{ border-radius: 10px; }}
 """
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"

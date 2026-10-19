@@ -11,7 +11,7 @@ from . import profiles as profile_actions
 from .logo import logo_icon, logo_pixmap
 from .settings_page import SettingsPage
 from .training_page import TrainingPage
-from .widgets import Chip, button, label
+from .widgets import Chip, button, label, repolish
 
 NAV = [("◉", "Inspeksi", 0), ("▣", "Training", 1), ("⚙", "Pengaturan", 2)]
 SIDEBAR_W, SIDEBAR_W_COLLAPSED = 200, 64
@@ -24,9 +24,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(f"{APP_NAME} — {APP_SUBTITLE} · {ctx.profile}")
         self.setWindowIcon(logo_icon())
         self.resize(1480, 920)
-        self.setMinimumSize(1100, 700)
+        self.setMinimumSize(800, 480)
+        self._compact = False
+        self._cfg_display = ctx.cfg.display_mode
 
         root = QtWidgets.QWidget()
+        self._root_widget = root
         root.setObjectName("Root")
         self.setCentralWidget(root)
         v = QtWidgets.QVBoxLayout(root)
@@ -84,7 +87,9 @@ class MainWindow(QtWidgets.QMainWindow):
         h = QtWidgets.QFrame()
         h.setObjectName("Header")
         h.setFixedHeight(64)
+        self.header = h
         lay = QtWidgets.QHBoxLayout(h)
+        self._header_layout = lay
         lay.setContentsMargins(12, 8, 20, 8)
         lay.setSpacing(10)
         self.btn_side = QtWidgets.QPushButton("☰")
@@ -97,6 +102,7 @@ class MainWindow(QtWidgets.QMainWindow):
         logo = QtWidgets.QLabel()
         logo.setFixedSize(40, 40)
         logo.setPixmap(logo_pixmap(40, self.devicePixelRatioF()))
+        self.logo = logo
         lay.addWidget(logo)
         tbox = QtWidgets.QVBoxLayout()
         tbox.setSpacing(0)
@@ -104,12 +110,14 @@ class MainWindow(QtWidgets.QMainWindow):
         t.setObjectName("AppTitle")
         s = QtWidgets.QLabel(APP_SUBTITLE)
         s.setObjectName("AppSubtitle")
+        self.lbl_subtitle = s
         tbox.addWidget(t)
         tbox.addWidget(s)
         lay.addLayout(tbox)
         lay.addSpacing(18)
         plabel = QtWidgets.QLabel("PROFIL")
         plabel.setObjectName("ProfileLabel")
+        self.lbl_profile = plabel
         lay.addWidget(plabel)
         self.cb_profile = QtWidgets.QComboBox()
         self.cb_profile.setObjectName("ProfileCombo")
@@ -187,7 +195,56 @@ class MainWindow(QtWidgets.QMainWindow):
         self.inspect.reset_for_profile()
         self.setWindowTitle(f"{APP_NAME} — {APP_SUBTITLE} · {name}")
 
+    # ------------------------------------------------------------------
+    def apply_display(self, mode=None):
+        """Terapkan mode tampilan: normal, layar penuh, atau ringkas 800×480 (Raspberry Pi)."""
+        mode = mode or self.ctx.cfg.display_mode
+        compact = mode == "pi800"
+        self._compact = compact
+        root = self._root_widget
+        root.setProperty("compact", compact)
+        app = QtWidgets.QApplication.instance()
+        app.setStyleSheet(app.styleSheet())          # terapkan ulang aturan [compact]
+        repolish(root)
+
+        self.header.setFixedHeight(44 if compact else 64)
+        if compact:
+            self._header_layout.setContentsMargins(6, 4, 10, 4)
+        else:
+            self._header_layout.setContentsMargins(12, 8, 20, 8)
+        self._header_layout.setSpacing(6 if compact else 10)
+        size = 30 if compact else 40
+        self.logo.setFixedSize(size, size)
+        self.logo.setPixmap(logo_pixmap(size, self.devicePixelRatioF()))
+        self.btn_side.setFixedSize(size, size)
+        for w in (self.lbl_subtitle, self.lbl_profile, self.lbl_clock, self.chip_fps):
+            w.setVisible(not compact)
+        self.cb_profile.setMinimumWidth(120 if compact else 190)
+        self._refresh_chips()
+
+        # di layar kecil sidebar selalu berupa strip ikon
+        self._apply_sidebar(True if compact else self.ctx.cfg.sidebar_collapsed, animate=False)
+        self.btn_side.setEnabled(not compact)
+        for page in (self.inspect, self.training, self.settings):
+            page.set_compact(compact)
+
+        if compact:
+            screen = self.screen().availableGeometry() if self.screen() else None
+            if screen is not None and screen.width() <= 1024 and screen.height() <= 600:
+                self.showFullScreen()                 # layar Raspberry Pi kecil
+            else:
+                self.showNormal()                     # pratinjau di PC/laptop
+                self.resize(800, 480)
+        elif mode == "fullscreen":
+            self.showFullScreen()
+        else:
+            self.showNormal()
+            if self.width() < 1100 or self.height() < 700:
+                self.resize(1480, 920)
+
     def toggle_sidebar(self):
+        if self._compact:
+            return
         collapsed = not self.ctx.cfg.sidebar_collapsed
         self.ctx.update(sidebar_collapsed=collapsed)
         self._apply_sidebar(collapsed, animate=True)
@@ -237,12 +294,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.frame_consumed()
 
     def _on_camera_status(self, connected, msg):
-        if connected:
-            self.chip_cam.set("Kamera: aktif", "ok")
-        else:
-            self.chip_cam.set("Kamera: tidak terhubung", "ng")
+        self._cam_connected = connected
+        if not connected:
             self.chip_fps.set("0.0 FPS")
         self.chip_cam.setToolTip(msg)
+        self._refresh_chips()
         self.inspect.on_camera_status(connected, msg)
         self.training.on_camera_status(connected, msg)
         self.settings.on_camera_status(connected, msg)
@@ -251,16 +307,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chip_fps.set(f"{fps:.1f} FPS")
         self.inspect.on_fps(fps)
 
+    def _refresh_chips(self):
+        """Teks chip header; di layar kecil cukup label singkat (detail di tooltip)."""
+        c = self._compact
+        connected = getattr(self, "_cam_connected", None)
+        if connected is None:
+            self.chip_cam.set("Kamera…" if c else "Kamera: menghubungkan…", "warn")
+        elif connected:
+            self.chip_cam.set("● Kamera" if c else "Kamera: aktif", "ok")
+        else:
+            self.chip_cam.set("✕ Kamera" if c else "Kamera: tidak terhubung", "ng")
+        m = self.ctx.models
+        if m.is_ready():
+            self.chip_model.set("● Model" if c else f"Model: {m.summary()}", "ok")
+        else:
+            self.chip_model.set("✕ Model" if c else f"Model: {m.summary().lower()}", "warn")
+        self.chip_model.setToolTip(m.summary())
+
     def _on_config(self, cfg):
+        # hanya bereaksi bila pengaturan Mode tampilan memang diganti (bukan perubahan lain,
+        # agar mode dari opsi --800x480 tidak tertimpa)
+        if cfg.display_mode != self._cfg_display:
+            self._cfg_display = cfg.display_mode
+            self.apply_display(cfg.display_mode)
         self.ctx.gpio.apply_config(cfg)
         self.inspect.on_config(cfg)
 
     def _on_model_changed(self):
-        m = self.ctx.models
-        if m.is_ready():
-            self.chip_model.set(f"Model: {m.summary()}", "ok")
-        else:
-            self.chip_model.set(f"Model: {m.summary().lower()}", "warn")
+        self._refresh_chips()
         self.training.refresh_model_info()
 
     def _tick(self):
@@ -268,7 +342,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_F11:
-            self.showNormal() if self.isFullScreen() else self.showFullScreen()
+            if self.isFullScreen():
+                self.showNormal()
+                if self._compact:
+                    self.resize(800, 480)
+            else:
+                self.showFullScreen()
             return
         super().keyPressEvent(e)
 

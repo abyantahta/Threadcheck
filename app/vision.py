@@ -65,7 +65,7 @@ class Inspector:
         if prob is None:
             return result("N/A", None, "Model tidak bisa dijalankan, latih ulang")
         if cfg.novelty_tolerance > 0 and nov is not None and nov > cfg.novelty_tolerance:
-            return result("NG", prob, "Objek tidak dikenal (beda dari sampel training)", nov, True)
+            return result("NG", prob, "Unidentified Object", nov, True)
         ok = prob >= cfg.ok_threshold
         return result("OK" if ok else "NG", prob, "Ulir terdeteksi" if ok else "Ulir tidak terdeteksi", nov)
 

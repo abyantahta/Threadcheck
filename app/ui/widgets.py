@@ -92,6 +92,17 @@ class ValueLabel(QtWidgets.QLabel):
         return QtCore.QSize(20, self.fontMetrics().height() + 4)
 
 
+def set_compact_cards(parent, compact: bool):
+    """Perkecil margin & jarak semua Card di dalam widget (mode layar kecil)."""
+    for card in parent.findChildren(Card):
+        if compact:
+            card.body.setContentsMargins(8, 6, 8, 8)
+            card.body.setSpacing(6)
+        else:
+            card.body.setContentsMargins(16, 14, 16, 16)
+            card.body.setSpacing(card.default_spacing)
+
+
 class Card(QtWidgets.QFrame):
     """Panel dengan judul kecil di atas."""
 
@@ -101,6 +112,7 @@ class Card(QtWidgets.QFrame):
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(16, 14, 16, 16)
         lay.setSpacing(spacing)
+        self.default_spacing = spacing
         self.header = QtWidgets.QHBoxLayout()
         self.header.setSpacing(8)
         if title:
@@ -247,7 +259,7 @@ class VideoView(QtWidgets.QWidget):
 
     def __init__(self, placeholder="Kamera belum terhubung"):
         super().__init__()
-        self.setMinimumSize(420, 300)
+        self.setMinimumSize(240, 160)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.setCursor(Qt.CrossCursor)
         self._img = None

@@ -7,11 +7,11 @@ from .. import __version__
 from ..camera import (BACKENDS, IS_WINDOWS, RESOLUTIONS, SOURCE_TYPES, list_opencv_cameras,
                       list_picamera2_cameras)
 from .. import config
-from ..config import APP_NAME, BASE_DIR
+from ..config import APP_NAME, BASE_DIR, DISPLAY_MODES
 from ..qt import QT_API, QtWidgets, Qt
 from . import profiles as profile_actions
 from .training_page import open_folder
-from .widgets import Card, button, label, scroll_panel, set_prop
+from .widgets import Card, button, label, scroll_panel, set_compact_cards, set_prop
 
 def _form():
     f = QtWidgets.QFormLayout()
@@ -82,6 +82,7 @@ class SettingsPage(QtWidgets.QWidget):
         grid = QtWidgets.QGridLayout(content)
         grid.setContentsMargins(16, 16, 16, 16)
         grid.setSpacing(16)
+        self._grid = grid
 
         # ================= Profil kamera =================
         prof = Card("Profil kamera")
@@ -108,7 +109,7 @@ class SettingsPage(QtWidgets.QWidget):
         pbtn.addStretch(1)
         prow.addLayout(pbtn)
         prof.body.addLayout(prow)
-        grid.addWidget(prof, 0, 0, 1, 2)
+
 
         # ================= Kamera =================
         cam = Card("Kamera")
@@ -168,7 +169,7 @@ class SettingsPage(QtWidgets.QWidget):
         self.lbl_cam = label("—", "status", wrap=True)
         cam.body.addWidget(self.lbl_cam)
         cam.body.addStretch(1)
-        grid.addWidget(cam, 1, 0)
+
 
         # ================= Keputusan =================
         dec = Card("Keputusan OK / NG")
@@ -179,7 +180,7 @@ class SettingsPage(QtWidgets.QWidget):
         self.sp_trig = _spin(1, 30, cfg.trigger_frames, 1, "  frame")
         self.sp_novelty = _spin(0.0, 5.0, cfg.novelty_tolerance, 0.1, " ×", 1)
         self.sp_novelty.setToolTip("Gambar yang terlalu berbeda dari sampel training dinyatakan NG "
-                                   "'objek tidak dikenal'. Lebih besar = lebih longgar, 0 = nonaktif.")
+                                   "'Unidentified Object'. Lebih besar = lebih longgar, 0 = nonaktif.")
         self.sp_smooth = _spin(1, 30, cfg.continuous_smoothing, 1, "  frame")
         f.addRow(label("Ambang OK", "muted"), self.sp_thr_ml)
         f.addRow(label("Toleransi objek asing", "muted"), self.sp_novelty)
@@ -191,7 +192,7 @@ class SettingsPage(QtWidgets.QWidget):
         self.sp_novelty.valueChanged.connect(lambda v: self.ctx.update(novelty_tolerance=v))
         self.sp_smooth.valueChanged.connect(lambda v: self.ctx.update(continuous_smoothing=v))
         dec.body.addStretch(1)
-        grid.addWidget(dec, 1, 1)
+
 
         # ================= Output GPIO =================
         gpio = Card("Output GPIO")
@@ -220,7 +221,7 @@ class SettingsPage(QtWidgets.QWidget):
             signal.connect(self._sync_gpio)
         self.btn_gpio_test.clicked.connect(lambda: self._test_gpio("ok"))
         self.btn_gpio_ng_test.clicked.connect(lambda: self._test_gpio("ng"))
-        grid.addWidget(gpio, 3, 0, 1, 2)
+
 
         # ================= Penyimpanan =================
         sto = Card("Penyimpanan & log")
@@ -244,7 +245,7 @@ class SettingsPage(QtWidgets.QWidget):
             folders.addWidget(b)
         sto.body.addLayout(folders)
         sto.body.addStretch(1)
-        grid.addWidget(sto, 2, 0)
+
 
         # ================= Info =================
         info = Card("Informasi sistem")
@@ -254,10 +255,29 @@ class SettingsPage(QtWidgets.QWidget):
             f"Sistem: {platform.system()} {platform.machine()}\n"
             f"Folder aplikasi: {BASE_DIR}", "hint", wrap=True))
         info.body.addStretch(1)
-        grid.addWidget(info, 2, 1)
-        grid.setRowStretch(4, 1)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
+
+        # ================= Tampilan =================
+        disp = Card("Tampilan")
+        disp.body.addWidget(label(
+            "Raspberry Pi 800×480: tata letak ringkas dan layar penuh untuk layar sentuh kecil. "
+            "Di PC/laptop mode ini tampil sebagai jendela 800×480 untuk pratinjau. "
+            "F11 = keluar/masuk layar penuh.", "hint", wrap=True))
+        f = _form()
+        self.cb_display = QtWidgets.QComboBox()
+        for k, v in DISPLAY_MODES.items():
+            self.cb_display.addItem(v, k)
+        self.cb_display.setCurrentIndex(max(0, self.cb_display.findData(cfg.display_mode)))
+        self.cb_display.currentIndexChanged.connect(
+            lambda: self.ctx.update(display_mode=self.cb_display.currentData()))
+        f.addRow(label("Mode tampilan", "muted"), self.cb_display)
+        disp.body.addLayout(f)
+        disp.body.addStretch(1)
+
+        # susunan kartu: (kartu, baris, kolom, rowspan, colspan) untuk layar normal;
+        # layar kecil memakai satu kolom dengan urutan yang sama
+        self._cards = [(prof, 0, 0, 1, 2), (cam, 1, 0, 1, 1), (dec, 1, 1, 1, 1),
+                       (disp, 2, 0, 1, 1), (sto, 2, 1, 1, 1), (gpio, 3, 0, 1, 2), (info, 4, 0, 1, 2)]
+        self._arrange(compact=False)
 
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -268,6 +288,33 @@ class SettingsPage(QtWidgets.QWidget):
         self._show_gpio()
 
     # ------------------------------------------------------------------
+    def _arrange(self, compact: bool):
+        grid = self._grid
+        for card, *_ in self._cards:
+            grid.removeWidget(card)
+        for i, (card, r, c, rs, cs) in enumerate(self._cards):
+            if compact:
+                grid.addWidget(card, i, 0)
+            else:
+                grid.addWidget(card, r, c, rs, cs)
+        for r in range(len(self._cards) + 1):
+            grid.setRowStretch(r, 0)
+        grid.setRowStretch(len(self._cards) + 1, 1)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 0 if compact else 1)
+
+    def set_compact(self, compact: bool):
+        """Satu kolom & jarak rapat untuk layar kecil (Raspberry Pi 800×480)."""
+        m = 6 if compact else 16
+        self._grid.setContentsMargins(m, m, m, m)
+        self._grid.setSpacing(m)
+        self.lst_profiles.setFixedHeight(80 if compact else 110)
+        self._arrange(compact)
+        set_compact_cards(self, compact)
+        self.cb_display.blockSignals(True)
+        self.cb_display.setCurrentIndex(max(0, self.cb_display.findData(self.ctx.cfg.display_mode)))
+        self.cb_display.blockSignals(False)
+
     def refresh_profiles(self):
         self.lst_profiles.clear()
         for name in config.list_profiles():

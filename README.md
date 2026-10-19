@@ -15,10 +15,11 @@ atau Raspberry Pi 5), dan kamera hanya berfungsi sebagai "mata".
 - **Training langsung di aplikasi**: ambil sampel ULIR / TANPA ULIR (tombol **1** / **2**), kelola
   dataset (galeri, hapus, pindah kelas, impor gambar), lalu latih YOLO26n-cls.
 - **Penolak objek tidak dikenal**: gambar yang jauh berbeda dari sampel training (wajah, tangan,
-  tidak ada part, part lain) dinyatakan **NG: objek tidak dikenal**, bukan OK.
+  tidak ada part, part lain) dinyatakan **NG: Unidentified Object**, bukan OK.
 - **Profil kamera**: setiap kamera punya kamera, ROI, pengaturan, dataset, dan model sendiri.
 - **Pilih kamera**: webcam/USB (OpenCV), Raspberry Pi Camera (Picamera2), atau file video/gambar.
 - Statistik (Total / OK / NG / Yield), riwayat inspeksi, sidebar yang bisa diciutkan (Ctrl+B).
+- **Mode tampilan**: normal, layar penuh, atau ringkas untuk layar Raspberry Pi 800×480.
 
 ## Cara kerja
 
@@ -26,7 +27,7 @@ atau Raspberry Pi 5), dan kamera hanya berfungsi sebagai "mata".
 2. **YOLO26n-cls** (model klasifikasi ±2,8 juta parameter, format ONNX) menilai potongan itu dan
    memberi **keyakinan berulir** 0–100%. Keyakinan ≥ ambang OK → **OK**.
 3. **Penolak objek tidak dikenal** membandingkan tampilan gambar (tata letak, tekstur, arah tepi,
-   warna) dengan sampel training. Bila terlalu berbeda → **NG: objek tidak dikenal**.
+   warna) dengan sampel training. Bila terlalu berbeda → **NG: Unidentified Object**.
 4. Belum ada model → **N/A** (aplikasi tidak pernah menyatakan OK tanpa model).
 
 Model hanya akurat untuk kamera dan setup tempat ia dilatih. Bila kamera, lensa, jarak, atau lampu
@@ -50,8 +51,12 @@ python3 -m venv --system-site-packages ~/threck-venv
 ~/threck-venv/bin/pip install onnxruntime
 ~/threck-venv/bin/python main.py
 ```
-Aplikasi otomatis memakai PyQt5 bila PySide6 tidak ada. Mode layar penuh untuk HMI:
-`./jalankan_pi.sh --fullscreen` (F11 untuk keluar/masuk layar penuh).
+Aplikasi otomatis memakai PyQt5 bila PySide6 tidak ada.
+
+**Layar Raspberry Pi 800×480**: pilih *Pengaturan → Tampilan → Raspberry Pi 800×480*, atau jalankan
+`./jalankan_pi.sh --800x480`. Tata letaknya diringkas (header tipis, sidebar ikon, panel lebih
+sempit, Pengaturan satu kolom) dan otomatis layar penuh. Untuk layar besar pakai `--fullscreen`.
+F11 = keluar/masuk layar penuh.
 
 **Training** disarankan di PC/laptop (±3–5 menit), lalu salin folder `profiles/` ke Raspberry Pi.
 Inferensi di Pi memakai file ONNX lewat `onnxruntime`, tanpa PyTorch.
@@ -65,6 +70,9 @@ Inferensi di Pi memakai file ONNX lewat `onnxruntime`, tanpa PyTorch.
    part selalu sama (pakai jig) agar ROI tidak perlu diubah-ubah.
 4. **Training**:
    - Ambil minimal 5 (disarankan **≥ 50**) sampel per kelas dari banyak part berbeda.
+   - *(Opsional)* centang **Early stopping**: training berhenti otomatis bila akurasi validasi tidak
+     membaik selama *patience* epoch ("Lama training" menjadi batas maksimum). Model akhir lalu
+     dilatih sebanyak epoch yang dijalankan tahap validasi, sehingga training lebih cepat.
    - Klik **Latih Model** dan baca laporannya. Baris *"Tanpa ulir lolos sebagai OK"* harus 0.
 5. **Inspeksi**: mode *Trigger*, tekan Spasi/INSPEKSI untuk setiap part.
 6. Bila part tanpa ulir masih ada yang lolos, naikkan **Ambang OK** di Pengaturan (mis. 0,7),

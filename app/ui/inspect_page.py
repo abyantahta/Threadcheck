@@ -9,7 +9,7 @@ from ..config import AppConfig
 from ..qt import QtCore, QtGui, QtWidgets, Qt
 from ..vision import draw_overlay, square_preview
 from .widgets import (Card, JudgementCard, ScoreBar, Segmented, StatTile, ValueLabel, VideoView,
-                      button, gray_to_pixmap, label, scroll_panel, video_frame)
+                      button, gray_to_pixmap, label, scroll_panel, set_compact_cards, video_frame)
 
 HISTORY_MAX = 300
 TEXT_REFRESH_S = 0.25      # teks nilai live diperbarui ±4x per detik agar mudah dibaca
@@ -28,9 +28,11 @@ class InspectPage(QtWidgets.QWidget):
         self._score_ema = None
         self.n_total = self.n_ok = self.n_ng = 0
 
+        self._preview_size = PREVIEW_SIZE
         root = QtWidgets.QHBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(16)
+        self._root = root
 
         # ---- kiri: video ----
         left = QtWidgets.QVBoxLayout()
@@ -64,8 +66,6 @@ class InspectPage(QtWidgets.QWidget):
         self.btn_trigger = button("INSPEKSI   ⏎ Spasi", "primary", "xl")
         self.btn_trigger.clicked.connect(self.trigger)
         mode_card.body.addWidget(self.btn_trigger)
-        self.lbl_mode_hint = label("", "hint", wrap=True)
-        mode_card.body.addWidget(self.lbl_mode_hint)
         pl.addWidget(mode_card)
 
         # analisis live
@@ -82,13 +82,14 @@ class InspectPage(QtWidgets.QWidget):
         rows = ((label("Status", "muted"), self.v_reason),
                 (label("Kemiripan objek", "muted"), self.v_novelty),
                 (label("Waktu proses", "muted"), self.v_time))
+        self._row_names = [name for name, _ in rows]
         for i, (name, w) in enumerate(rows):
             name.setFixedWidth(118)
             grid.addWidget(name, i, 0, Qt.AlignVCenter)
             grid.addWidget(w, i, 1, Qt.AlignVCenter)
         grid.setColumnStretch(1, 1)
         self.v_novelty.setToolTip("Seberapa mirip gambar dengan sampel training. Di atas batas toleransi, "
-                                  "hasil dinyatakan NG 'objek tidak dikenal'.")
+                                  "hasil dinyatakan NG 'Unidentified Object'.")
         live.body.addLayout(grid)
         live.body.addWidget(label("Gambar yang dinilai model (potongan ROI)", "hint"))
         self.preview = QtWidgets.QLabel()
@@ -130,7 +131,9 @@ class InspectPage(QtWidgets.QWidget):
         pl.addWidget(hist)
         pl.addStretch(1)
 
-        root.addWidget(scroll_panel(panel, 410))
+        self._side = scroll_panel(panel, 410)
+        self._panel_layout = pl
+        root.addWidget(self._side)
 
         self._timeout = QtCore.QTimer(self)
         self._timeout.setSingleShot(True)
@@ -151,15 +154,6 @@ class InspectPage(QtWidgets.QWidget):
         self._apply_gpio(None)
         if trig:
             self.judge.set_state("", "—", "Tekan INSPEKSI atau Spasi")
-        self._mode_hint(self.ctx.cfg)
-
-    def _mode_hint(self, cfg):
-        if cfg.inspect_mode == "trigger":
-            self.lbl_mode_hint.setText(f"Setiap trigger merata-rata {cfg.trigger_frames} frame, "
-                                       "lalu hasil dihitung, dicatat ke log, dan disimpan.")
-        else:
-            self.lbl_mode_hint.setText("Judgement diperbarui terus-menerus dari video. "
-                                       "Mode ini tidak menghitung statistik/log.")
 
     def on_camera_status(self, connected, msg):
         if not connected:
@@ -204,7 +198,7 @@ class InspectPage(QtWidgets.QWidget):
         self.v_time.setText(f"{res.proc_ms:.1f} ms")
         if res.frame is not None:
             x, y, w, h = res.roi_px
-            prev = square_preview(res.frame[y:y + h, x:x + w], PREVIEW_SIZE)
+            prev = square_preview(res.frame[y:y + h, x:x + w], self._preview_size)
             self.preview.setPixmap(gray_to_pixmap(prev))
 
     # ------------------------------------------------------------------
@@ -292,7 +286,7 @@ class InspectPage(QtWidgets.QWidget):
 
     def _add_history(self, final, score, reason):
         self.table.insertRow(0)
-        items = [time.strftime("%H:%M:%S"), final, f"{score * 100:.1f}%" if score is not None else "asing"]
+        items = [time.strftime("%H:%M:%S"), final, f"{score * 100:.1f}%" if score is not None else "Unidentified"]
         for c, text in enumerate(items):
             it = QtWidgets.QTableWidgetItem(text)
             it.setTextAlignment(Qt.AlignCenter)
@@ -336,10 +330,26 @@ class InspectPage(QtWidgets.QWidget):
     def on_config(self, cfg):
         if self.mode.value() != cfg.inspect_mode:
             self.mode.set_value(cfg.inspect_mode)
-        self._mode_hint(cfg)
 
     def _apply_gpio(self, judgement):
         self.ctx.gpio.set_result(judgement)
+
+    def set_compact(self, compact: bool):
+        """Tata letak ringkas untuk layar kecil (Raspberry Pi 800×480)."""
+        m = 6 if compact else 16
+        self._root.setContentsMargins(m, m, m, m)
+        self._root.setSpacing(m)
+        self._side.setFixedWidth(270 if compact else 410)
+        self._panel_layout.setSpacing(6 if compact else 12)
+        self.judge.setMinimumHeight(92 if compact else 190)
+        self._preview_size = 84 if compact else PREVIEW_SIZE
+        self.preview.setFixedHeight(self._preview_size + 8)
+        self.preview.clear()
+        self._t_text = 0.0                           # gambar pratinjau segera digambar ulang
+        self.table.setMinimumHeight(110 if compact else 200)
+        for name in self._row_names:
+            name.setFixedWidth(96 if compact else 118)
+        set_compact_cards(self, compact)
 
     def on_fps(self, fps):
         self.video.badge = f"●  LIVE   {fps:.1f} FPS"

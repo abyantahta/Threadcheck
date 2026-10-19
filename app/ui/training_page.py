@@ -8,8 +8,8 @@ from ..model import MIN_PER_CLASS, format_report
 from ..qt import QtCore, QtGui, QtWidgets, Qt
 from ..workers import TrainWorker
 from ..yolo_backend import training_available
-from .widgets import (Card, StatTile, VideoView, button, label, scroll_panel, set_prop,
-                      video_frame)
+from .widgets import (Card, StatTile, VideoView, button, label, scroll_panel, set_compact_cards,
+                      set_prop, video_frame)
 
 GALLERY_MAX = 400
 THUMB = 84
@@ -30,6 +30,7 @@ class TrainingPage(QtWidgets.QWidget):
         root = QtWidgets.QHBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(16)
+        self._root = root
 
         # ---- kiri: video ----
         left = QtWidgets.QVBoxLayout()
@@ -55,9 +56,6 @@ class TrainingPage(QtWidgets.QWidget):
 
         # Ambil sampel
         cap = Card("1 · Ambil sampel")
-        cap.body.addWidget(label("Letakkan part, pastikan ulir terlihat jelas di dalam kotak ROI, lalu "
-                                 "simpan sesuai kondisi sebenarnya. Ambil dari banyak part berbeda dan "
-                                 "variasikan posisi sedikit agar model lebih tangguh.", "hint", wrap=True))
         row = QtWidgets.QHBoxLayout()
         self.btn_ok = button("＋ ULIR\nOK  ·  tombol 1", "ok", "lg")
         self.btn_ng = button("＋ TANPA ULIR\nNG  ·  tombol 2", "ng", "lg")
@@ -130,6 +128,20 @@ class TrainingPage(QtWidgets.QWidget):
         self.sp_epochs.valueChanged.connect(lambda v: self.ctx.update(yolo_epochs=v))
         form.addRow(label("Model", "muted"), label("YOLO26n-cls", "value"))
         form.addRow(label("Lama training", "muted"), self.sp_epochs)
+        self.chk_early = QtWidgets.QCheckBox("Aktif")
+        self.chk_early.setChecked(ctx.cfg.yolo_early_stop)
+        self.chk_early.setToolTip("Hentikan training otomatis bila akurasi validasi tidak membaik lagi. "
+                                  "'Lama training' menjadi batas maksimum epoch.")
+        self.sp_patience = QtWidgets.QSpinBox()
+        self.sp_patience.setRange(3, 100)
+        self.sp_patience.setValue(ctx.cfg.yolo_patience)
+        self.sp_patience.setSuffix("  epoch tanpa perbaikan")
+        self.sp_patience.setToolTip("Berhenti bila akurasi validasi tidak membaik selama sekian epoch.")
+        self.sp_patience.setEnabled(ctx.cfg.yolo_early_stop)
+        self.chk_early.toggled.connect(self._early_changed)
+        self.sp_patience.valueChanged.connect(lambda v: self.ctx.update(yolo_patience=v))
+        form.addRow(label("Early stopping", "muted"), self.chk_early)
+        form.addRow(label("Patience", "muted"), self.sp_patience)
         self.lbl_algo = label("", "hint", wrap=True)
         form.addRow(self.lbl_algo)
         tr.body.addLayout(form)
@@ -154,7 +166,9 @@ class TrainingPage(QtWidgets.QWidget):
         pl.addWidget(tr)
         pl.addStretch(1)
 
-        root.addWidget(scroll_panel(panel, 440))
+        self._side = scroll_panel(panel, 440)
+        self._panel_layout = pl
+        root.addWidget(self._side)
 
         self.gallery.installEventFilter(self)
 
@@ -163,11 +177,26 @@ class TrainingPage(QtWidgets.QWidget):
         self.refresh_model_info()
         self._update_algo_hint()
 
+    def set_compact(self, compact: bool):
+        """Tata letak ringkas untuk layar kecil (Raspberry Pi 800×480)."""
+        m = 6 if compact else 16
+        self._root.setContentsMargins(m, m, m, m)
+        self._root.setSpacing(m)
+        self._side.setFixedWidth(300 if compact else 440)
+        self._panel_layout.setSpacing(6 if compact else 12)
+        self.gallery.setMinimumHeight(140 if compact else 230)
+        self.report.setMinimumHeight(150 if compact else 280)
+        set_compact_cards(self, compact)
+
+    def _early_changed(self, on):
+        self.sp_patience.setEnabled(on)
+        self.ctx.update(yolo_early_stop=on)
+
     def _update_algo_hint(self):
-        if training_available():
-            self.lbl_algo.setText("Training ±3–5 menit di laptop. Di Raspberry Pi jauh lebih lama: "
-                                  "disarankan latih di PC lalu salin folder profiles/ ke Pi.")
-        else:
+        # hanya tampil bila training tidak bisa dijalankan di perangkat ini
+        missing = not training_available()
+        self.lbl_algo.setVisible(missing)
+        if missing:
             self.lbl_algo.setText("⚠ Ultralytics belum terpasang (pip install ultralytics). Model yang sudah "
                                   "dilatih di PC tetap bisa dipakai di sini.")
 
@@ -185,7 +214,7 @@ class TrainingPage(QtWidgets.QWidget):
             return
         x, y, w, h = res.roi_px
         if res.unknown:
-            self.lbl_detect.setText(f"ROI {w}×{h} px  ·  model: objek asing")
+            self.lbl_detect.setText(f"ROI {w}×{h} px  ·  model: Unidentified Object")
             set_prop(self.lbl_detect, "tone", "warn")
         elif res.score is not None:
             self.lbl_detect.setText(f"ROI {w}×{h} px  ·  model: {res.score * 100:.0f}% berulir")
@@ -296,9 +325,14 @@ class TrainingPage(QtWidgets.QWidget):
 
     def reload(self, cfg):
         """Muat ulang kontrol, dataset, dan info model (dipakai saat ganti profil)."""
-        self.sp_epochs.blockSignals(True)
+        for w in (self.sp_epochs, self.chk_early, self.sp_patience):
+            w.blockSignals(True)
         self.sp_epochs.setValue(cfg.yolo_epochs)
-        self.sp_epochs.blockSignals(False)
+        self.chk_early.setChecked(cfg.yolo_early_stop)
+        self.sp_patience.setValue(cfg.yolo_patience)
+        self.sp_patience.setEnabled(cfg.yolo_early_stop)
+        for w in (self.sp_epochs, self.chk_early, self.sp_patience):
+            w.blockSignals(False)
         self._update_algo_hint()
         self._last = None
         self.progress.setValue(0)

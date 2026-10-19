@@ -70,17 +70,26 @@ class AppConfig:
     log_csv: bool = True
 
     # --- Training ---
-    yolo_epochs: int = 40                  # jumlah epoch training YOLO26n-cls
+    yolo_epochs: int = 40                  # jumlah epoch training YOLO26n-cls (maksimum bila early stopping)
+    yolo_early_stop: bool = False          # hentikan training bila akurasi validasi tidak membaik
+    yolo_patience: int = 10                # jumlah epoch tanpa perbaikan sebelum berhenti
 
     # --- UI ---
     inspect_mode: str = "trigger"          # trigger | continuous
     sidebar_collapsed: bool = False        # sidebar navigasi diciutkan (global, bukan per profil)
+    display_mode: str = "normal"           # normal | fullscreen | pi800 (global, bukan per profil)
 
     def with_(self, **kw) -> "AppConfig":
         return replace(self, **kw)
 
 
-GLOBAL_KEYS = ("sidebar_collapsed",)
+GLOBAL_KEYS = ("sidebar_collapsed", "display_mode")
+
+DISPLAY_MODES = {
+    "normal": "Normal (jendela)",
+    "fullscreen": "Layar penuh",
+    "pi800": "Raspberry Pi 800×480 (layar penuh, ringkas)",
+}
 
 # ---------------------------------------------------------------------------
 # Profil aktif & path

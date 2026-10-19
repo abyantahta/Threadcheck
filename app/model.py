@@ -126,7 +126,16 @@ def train_model(cfg, progress=lambda pct, msg: None, should_stop=lambda: False):
         if n < MIN_PER_CLASS:
             raise TrainingError(f"Sampel kelas '{cls}' baru {n}. Minimal {MIN_PER_CLASS} per kelas "
                                 "(disarankan ≥ 50).")
-    return train_yolo(epochs=cfg.yolo_epochs, progress=progress, should_stop=should_stop)
+    patience = cfg.yolo_patience if cfg.yolo_early_stop else 0
+    return train_yolo(epochs=cfg.yolo_epochs, patience=patience, progress=progress, should_stop=should_stop)
+
+
+def _early_stop_text(es) -> str:
+    if not es:
+        return "nonaktif"
+    stop = (f"berhenti di epoch {es['epochs_run']}/{es['max_epochs']}" if es.get("stopped_early")
+            else f"tidak terpicu ({es['epochs_run']} epoch)")
+    return f"aktif (patience {es['patience']}) · validasi {stop}, terbaik di epoch {es['best_epoch']}"
 
 
 def format_report(report) -> str:
@@ -137,6 +146,7 @@ def format_report(report) -> str:
         f"Waktu training    : {report['duration_s'] / 60:.1f} menit",
         f"Sampel            : ulir={m['n_ok']}, tanpa ulir={m['n_ng']}",
         f"Validasi          : {report['cv_desc']}",
+        f"Early stopping    : {_early_stop_text(m.get('early_stopping'))}",
         "",
         f"Akurasi            : {m['cv_accuracy'] * 100:.1f}%",
         f"Balanced accuracy  : {m['cv_balanced_accuracy'] * 100:.1f}%",
