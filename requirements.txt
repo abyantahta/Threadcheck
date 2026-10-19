@@ -10,3 +10,5 @@ onnxruntime>=1.16        # inferensi model YOLO (ONNX)
 # ultralytics>=8.4
 
 # Raspberry Pi: lihat README.md (disarankan install lewat apt)
+# Output GPIO saat OK memakai salah satu yang sudah ada di Pi:
+# python3-gpiozero, python3-lgpio, atau python3-rpi.gpio

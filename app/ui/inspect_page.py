@@ -148,6 +148,7 @@ class InspectPage(QtWidgets.QWidget):
         trig = mode == "trigger"
         self.btn_trigger.setEnabled(trig)
         self._buffer.clear()
+        self._apply_gpio(None)
         if trig:
             self.judge.set_state("", "—", "Tekan INSPEKSI atau Spasi")
         self._mode_hint(self.ctx.cfg)
@@ -173,6 +174,7 @@ class InspectPage(QtWidgets.QWidget):
             recent = list(self._buffer)[-max(1, cfg.continuous_smoothing):]
             j, score, reason, _ = self._combine(recent)
             self._show_judgement(j, score, reason)
+            self._apply_gpio(j)
         elif self._pending > 0:
             self._collected.append(res)
             self._pending -= 1
@@ -211,6 +213,7 @@ class InspectPage(QtWidgets.QWidget):
             return
         self._collected = []
         self._pending = max(1, self.ctx.cfg.trigger_frames)
+        self._apply_gpio(None)
         self.btn_trigger.setEnabled(False)
         self.judge.set_state("WAIT", "…", "Menganalisis")
         self._timeout.start(4000)
@@ -222,6 +225,7 @@ class InspectPage(QtWidgets.QWidget):
                 self._finalize()
             else:
                 self.btn_trigger.setEnabled(True)
+                self._apply_gpio(None)
                 self.judge.set_state("WAIT", "!", "Tidak ada gambar dari kamera")
 
     def _combine(self, results):
@@ -252,6 +256,7 @@ class InspectPage(QtWidgets.QWidget):
         j, score, reason, rep = self._combine(self._collected)
         self._collected = []
         self._show_judgement(j, score, reason)
+        self._apply_gpio(j)
         if j == "N/A":
             return
         self.n_total += 1
@@ -312,6 +317,7 @@ class InspectPage(QtWidgets.QWidget):
         self._pending = 0
         self._collected = []
         self._buffer.clear()
+        self._apply_gpio(None)
         self._timeout.stop()
         self.btn_trigger.setEnabled(self.ctx.cfg.inspect_mode == "trigger")
         self.judge.set_state("", "—", "Profil diganti · tekan INSPEKSI atau Spasi")
@@ -331,6 +337,9 @@ class InspectPage(QtWidgets.QWidget):
         if self.mode.value() != cfg.inspect_mode:
             self.mode.set_value(cfg.inspect_mode)
         self._mode_hint(cfg)
+
+    def _apply_gpio(self, judgement):
+        self.ctx.gpio.set_result(judgement)
 
     def on_fps(self, fps):
         self.video.badge = f"●  LIVE   {fps:.1f} FPS"

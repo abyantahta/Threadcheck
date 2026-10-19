@@ -1,6 +1,7 @@
 """State aplikasi yang dibagi antar halaman."""
 from . import config
 from .config import load_config, save_config
+from .gpio_out import GpioOutputs
 from .model import ModelManager
 from .qt import QtCore, Signal
 
@@ -15,6 +16,8 @@ class AppContext(QtCore.QObject):
         self.cfg = load_config()
         self.models = ModelManager()
         self.models.load()
+        self.gpio = GpioOutputs(self)
+        self.gpio.apply_config(self.cfg)
         self.worker = None
         self.training_active = False
         self._save_timer = QtCore.QTimer(self)
