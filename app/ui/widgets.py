@@ -72,9 +72,6 @@ class ValueLabel(QtWidgets.QLabel):
         self.setToolTip(text)
         self._apply()
 
-    def text_full(self):
-        return self._full
-
     def _apply(self):
         fm = self.fontMetrics()
         super().setText(fm.elidedText(self._full, Qt.ElideRight, max(20, self.width())))

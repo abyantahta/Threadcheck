@@ -1,0 +1,2 @@
+# Skrip shell harus tetap LF agar bisa jalan di Raspberry Pi
+*.sh text eol=lf

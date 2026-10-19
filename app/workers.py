@@ -8,7 +8,7 @@ import cv2
 from .camera import CameraError, create_source
 from .model import TrainingError, train_model
 from .qt import QtCore, QtGui, Signal
-from .vision import DetectParams, Inspector, draw_overlay
+from .vision import Inspector, draw_overlay
 
 
 def bgr_to_qimage(img):
@@ -64,8 +64,7 @@ class FrameGrabber:
 def _scaled(res, s):
     """Salinan hasil inspeksi dengan koordinat diskalakan (untuk menggambar di citra kecil)."""
     roi = tuple(int(round(v * s)) for v in res.roi_px)
-    circle = None if res.circle is None else (res.circle[0] * s, res.circle[1] * s, res.circle[2] * s)
-    return dc_replace(res, roi_px=roi, circle=circle, frame=None)
+    return dc_replace(res, roi_px=roi, frame=None)
 
 
 class CameraWorker(QtCore.QThread):
@@ -93,10 +92,6 @@ class CameraWorker(QtCore.QThread):
             self._cfg = cfg
             if reopen:
                 self._reopen = True
-
-    def reconnect(self):
-        with self._lock:
-            self._reopen = True
 
     def open_driver_settings(self):
         self._driver_settings = True
@@ -183,9 +178,9 @@ class CameraWorker(QtCore.QThread):
                 s = self.DISPLAY_MAX_W / frame.shape[1]
                 disp = cv2.resize(frame, (self.DISPLAY_MAX_W, int(frame.shape[0] * s)),
                                   interpolation=cv2.INTER_AREA)
-                vis = draw_overlay(disp, _scaled(result, s), cfg)
+                vis = draw_overlay(disp, _scaled(result, s))
             else:
-                vis = draw_overlay(frame.copy(), result, cfg)
+                vis = draw_overlay(frame.copy(), result)
             self._busy_gui = True
             self.frame_ready.emit(bgr_to_qimage(vis), result)
 
@@ -213,10 +208,8 @@ class TrainWorker(QtCore.QThread):
 
     def run(self):
         try:
-            bundle, report = train_model(
-                DetectParams.from_config(self.cfg), self.cfg.model_kind, self.cfg.augment,
-                self.cfg.aug_per_image, progress=lambda p, m: self.progress.emit(p, m),
-                should_stop=lambda: self._stop)
+            bundle, report = train_model(self.cfg, progress=lambda p, m: self.progress.emit(p, m),
+                                         should_stop=lambda: self._stop)
         except TrainingError as e:
             self.failed.emit(str(e))
             return

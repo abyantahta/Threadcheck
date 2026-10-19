@@ -1,6 +1,4 @@
 """State aplikasi yang dibagi antar halaman."""
-from collections import deque
-
 from . import config
 from .config import load_config, save_config
 from .model import ModelManager
@@ -18,7 +16,6 @@ class AppContext(QtCore.QObject):
         self.models = ModelManager()
         self.models.load()
         self.worker = None
-        self.recent = deque(maxlen=20)      # hasil analisis terakhir (untuk kalibrasi)
         self.training_active = False
         self._save_timer = QtCore.QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -48,7 +45,6 @@ class AppContext(QtCore.QObject):
         self.flush()
         sidebar = self.cfg.sidebar_collapsed
         self.cfg = config.switch_profile(name).with_(sidebar_collapsed=sidebar)
-        self.recent.clear()
         self.models.clear()
         self.models.load()
         if self.worker is not None:

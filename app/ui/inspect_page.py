@@ -2,19 +2,19 @@
 import time
 from collections import deque
 
-import cv2
 import numpy as np
 
 from .. import storage
 from ..config import AppConfig
 from ..qt import QtCore, QtGui, QtWidgets, Qt
-from ..vision import draw_overlay
+from ..vision import draw_overlay, square_preview
 from .widgets import (Card, JudgementCard, ScoreBar, Segmented, StatTile, ValueLabel, VideoView,
                       button, gray_to_pixmap, label, scroll_panel, video_frame)
 
 HISTORY_MAX = 300
 TEXT_REFRESH_S = 0.25      # teks nilai live diperbarui ±4x per detik agar mudah dibaca
 SCORE_SMOOTHING = 0.35     # bobot nilai baru pada bar skor (EMA), makin kecil makin halus
+PREVIEW_SIZE = 150
 
 
 class InspectPage(QtWidgets.QWidget):
@@ -24,6 +24,8 @@ class InspectPage(QtWidgets.QWidget):
         self._buffer = deque(maxlen=30)
         self._pending = 0
         self._collected = []
+        self._t_text = 0.0
+        self._score_ema = None
         self.n_total = self.n_ok = self.n_ng = 0
 
         root = QtWidgets.QHBoxLayout(self)
@@ -41,8 +43,6 @@ class InspectPage(QtWidgets.QWidget):
         self.btn_reset_roi.clicked.connect(lambda: self.ctx.update(roi=AppConfig().roi))
         bar.addWidget(self.btn_reset_roi)
         bar.addStretch(1)
-        self.lbl_proc = label("", "muted")
-        bar.addWidget(self.lbl_proc)
         left.addLayout(bar)
         root.addLayout(left, 1)
 
@@ -71,37 +71,31 @@ class InspectPage(QtWidgets.QWidget):
         # analisis live
         live = Card("Analisis live")
         self.score_bar = ScoreBar()
-        live.body.addWidget(label("Skor ulir (garis putih = ambang OK)", "hint"))
+        live.body.addWidget(label("Keyakinan berulir (garis putih = ambang OK)", "hint"))
         live.body.addWidget(self.score_bar)
         grid = QtWidgets.QGridLayout()
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(6)
-        self.v_method = ValueLabel()
         self.v_reason = ValueLabel()
-        self.v_geo1 = ValueLabel()
-        self.v_geo2 = ValueLabel()
+        self.v_novelty = ValueLabel()
         self.v_time = ValueLabel()
-        self.n_geo1 = label("Jarak garis", "muted")
-        self.n_geo2 = label("Kontras · sudut", "muted")
-        rows = ((label("Metode", "muted"), self.v_method), (label("Status", "muted"), self.v_reason),
-                (self.n_geo1, self.v_geo1), (self.n_geo2, self.v_geo2),
+        rows = ((label("Status", "muted"), self.v_reason),
+                (label("Kemiripan objek", "muted"), self.v_novelty),
                 (label("Waktu proses", "muted"), self.v_time))
         for i, (name, w) in enumerate(rows):
             name.setFixedWidth(118)
             grid.addWidget(name, i, 0, Qt.AlignVCenter)
             grid.addWidget(w, i, 1, Qt.AlignVCenter)
         grid.setColumnStretch(1, 1)
-        self._t_text = 0.0
-        self._score_ema = None
+        self.v_novelty.setToolTip("Seberapa mirip gambar dengan sampel training. Di atas batas toleransi, "
+                                  "hasil dinyatakan NG 'objek tidak dikenal'.")
         live.body.addLayout(grid)
-        self.polar = QtWidgets.QLabel()
-        self.polar.setAlignment(Qt.AlignCenter)
-        self.polar.setFixedHeight(110)
-        self.polar.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
-        self.polar.setStyleSheet("background:#05080b; border-radius:6px;")
-        self.lbl_view = label("", "hint", wrap=True)
-        live.body.addWidget(self.lbl_view)
-        live.body.addWidget(self.polar)
+        live.body.addWidget(label("Gambar yang dinilai model (potongan ROI)", "hint"))
+        self.preview = QtWidgets.QLabel()
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setFixedHeight(PREVIEW_SIZE + 8)
+        self.preview.setStyleSheet("background:#05080b; border-radius:6px;")
+        live.body.addWidget(self.preview)
         pl.addWidget(live)
 
         # statistik
@@ -123,8 +117,8 @@ class InspectPage(QtWidgets.QWidget):
 
         # riwayat
         hist = Card("Riwayat inspeksi")
-        self.table = QtWidgets.QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["WAKTU", "HASIL", "SKOR", "METODE"])
+        self.table = QtWidgets.QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["WAKTU", "HASIL", "KEYAKINAN"])
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -144,7 +138,6 @@ class InspectPage(QtWidgets.QWidget):
 
         self.mode.set_value(ctx.cfg.inspect_mode)
         self._apply_mode(ctx.cfg.inspect_mode)
-        self.on_config(ctx.cfg)
 
     # ------------------------------------------------------------------
     def _on_mode(self, mode):
@@ -156,9 +149,13 @@ class InspectPage(QtWidgets.QWidget):
         self.btn_trigger.setEnabled(trig)
         self._buffer.clear()
         if trig:
-            self.lbl_mode_hint.setText(f"Setiap trigger merata-rata {self.ctx.cfg.trigger_frames} frame, "
-                                       "lalu hasil dihitung, dicatat ke log, dan disimpan.")
             self.judge.set_state("", "—", "Tekan INSPEKSI atau Spasi")
+        self._mode_hint(self.ctx.cfg)
+
+    def _mode_hint(self, cfg):
+        if cfg.inspect_mode == "trigger":
+            self.lbl_mode_hint.setText(f"Setiap trigger merata-rata {cfg.trigger_frames} frame, "
+                                       "lalu hasil dihitung, dicatat ke log, dan disimpan.")
         else:
             self.lbl_mode_hint.setText("Judgement diperbarui terus-menerus dari video. "
                                        "Mode ini tidak menghitung statistik/log.")
@@ -173,10 +170,9 @@ class InspectPage(QtWidgets.QWidget):
         cfg = self.ctx.cfg
         if cfg.inspect_mode == "continuous":
             self._buffer.append(res)
-            n = max(1, cfg.continuous_smoothing)
-            recent = list(self._buffer)[-n:]
-            j, score, method, reason, _ = self._combine(recent)
-            self._show_judgement(j, score, method, reason)
+            recent = list(self._buffer)[-max(1, cfg.continuous_smoothing):]
+            j, score, reason, _ = self._combine(recent)
+            self._show_judgement(j, score, reason)
         elif self._pending > 0:
             self._collected.append(res)
             self._pending -= 1
@@ -184,38 +180,30 @@ class InspectPage(QtWidgets.QWidget):
                 self._finalize()
 
     def _update_live(self, res):
-        cfg = self.ctx.cfg
-        thr = cfg.ok_threshold if res.method == "ML" else cfg.rule_threshold
         if res.score is None:
             self._score_ema = None
         elif self._score_ema is None:
             self._score_ema = res.score
         else:
             self._score_ema += SCORE_SMOOTHING * (res.score - self._score_ema)
-        self.score_bar.set(self._score_ema, thr)
+        self.score_bar.set(self._score_ema, self.ctx.cfg.ok_threshold)
 
         now = time.monotonic()
-        if now - self._t_text >= TEXT_REFRESH_S:
-            self._t_text = now
-            self.v_method.setText(res.method)
-            self.v_reason.setText(res.reason)
-            if res.circle is not None:
-                self.v_geo1.setText(f"{res.circle[2]:.1f} px")
-                self.v_geo2.setText("—")
-            elif "period_px" in res.info:
-                self.v_geo1.setText(f"{res.info['period_px']:.1f} px")
-                self.v_geo2.setText(f"{res.info.get('contrast', 0):.1f}  ·  {res.info.get('angle', 0):+.0f}°")
-            else:
-                self.v_geo1.setText("—")
-                self.v_geo2.setText("—")
-            self.v_time.setText(f"{res.proc_ms:.1f} ms")
-        if res.band is not None:
-            w = max(60, self.polar.width())
-            img = res.band.T if cfg.view_mode == "top" else res.band
-            strip = cv2.resize(img, (w, self.polar.height()), interpolation=cv2.INTER_LINEAR)
-            self.polar.setPixmap(gray_to_pixmap(strip))
+        if now - self._t_text < TEXT_REFRESH_S or not self.isVisible():
+            return
+        self._t_text = now
+        self.v_reason.setText(res.reason)
+        tol = self.ctx.cfg.novelty_tolerance
+        if res.novelty is None:
+            self.v_novelty.setText("—")
         else:
-            self.polar.clear()
+            state = "asing" if (tol > 0 and res.novelty > tol) else "dikenal"
+            self.v_novelty.setText(f"{state}  ·  {res.novelty:.2f} (batas {tol:.1f})")
+        self.v_time.setText(f"{res.proc_ms:.1f} ms")
+        if res.frame is not None:
+            x, y, w, h = res.roi_px
+            prev = square_preview(res.frame[y:y + h, x:x + w], PREVIEW_SIZE)
+            self.preview.setPixmap(gray_to_pixmap(prev))
 
     # ------------------------------------------------------------------
     def trigger(self):
@@ -237,66 +225,52 @@ class InspectPage(QtWidgets.QWidget):
                 self.judge.set_state("WAIT", "!", "Tidak ada gambar dari kamera")
 
     def _combine(self, results):
-        cfg = self.ctx.cfg
+        """Gabungkan beberapa frame menjadi satu keputusan: (judgement, skor, alasan, contoh)."""
         n = len(results)
         na = [r for r in results if r.judgement == "N/A"]
         if len(na) * 2 >= n:
-            return "N/A", None, na[-1].method, na[-1].reason, na[-1]
-        unknown = [r for r in results if r.info.get("unknown")]
+            return "N/A", None, na[-1].reason, na[-1]
+        unknown = [r for r in results if r.unknown]
         if len(unknown) * 2 >= n:
-            return "NG", 0.0, unknown[-1].method, unknown[-1].reason, unknown[-1]
-        valid = [r for r in results if r.judgement in ("OK", "NG") and r.score is not None
-                 and not r.info.get("unknown")]
-        if len(valid) * 2 < n or not valid:
-            nh = [r for r in results if r.judgement == "NO_HOLE"]
-            return "NO_HOLE", None, "-", (nh[-1].reason if nh else "Hasil tidak stabil"), results[-1]
+            return "NG", None, unknown[-1].reason, unknown[-1]
+        valid = [r for r in results if r.judgement in ("OK", "NG") and not r.unknown]
         score = float(np.mean([r.score for r in valid]))
-        method = valid[-1].method
-        thr = cfg.ok_threshold if method == "ML" else cfg.rule_threshold
-        ok = score >= thr
+        ok = score >= self.ctx.cfg.ok_threshold
         rep = min(valid, key=lambda r: abs(r.score - score))
-        return ("OK" if ok else "NG"), score, method, ("Ulir terdeteksi" if ok else "Ulir tidak terdeteksi"), rep
+        return ("OK" if ok else "NG"), score, ("Ulir terdeteksi" if ok else "Ulir tidak terdeteksi"), rep
 
-    def _show_judgement(self, j, score, method, reason):
-        pct = f"{score * 100:.1f}%" if score is not None else ""
-        if j == "OK":
-            self.judge.set_state("OK", "OK", f"{reason} · {pct} · {method}")
-        elif j == "NG" and pct and "tidak dikenal" not in reason:
-            self.judge.set_state("NG", "NG", f"{reason} · {pct} · {method}")
-        elif j == "NG":
-            self.judge.set_state("NG", "NG", reason)
-        elif j == "NO_HOLE":
-            self.judge.set_state("NG", "NG", "Lubang tidak terdeteksi")
+    def _show_judgement(self, j, score, reason):
+        pct = f" · {score * 100:.1f}%" if score is not None else ""
+        if j in ("OK", "NG"):
+            self.judge.set_state(j, j, reason + pct)
         else:
             self.judge.set_state("WAIT", "N/A", reason)
 
     def _finalize(self):
         self._timeout.stop()
         self.btn_trigger.setEnabled(True)
-        j, score, method, reason, rep = self._combine(self._collected)
+        j, score, reason, rep = self._combine(self._collected)
         self._collected = []
-        self._show_judgement(j, score, method, reason)
+        self._show_judgement(j, score, reason)
         if j == "N/A":
             return
-        final = "OK" if j == "OK" else "NG"
         self.n_total += 1
-        if final == "OK":
+        if j == "OK":
             self.n_ok += 1
         else:
             self.n_ng += 1
         self._refresh_stats()
-        self._add_history(final, score, method, reason)
-        self._persist(final, score, method, reason, rep)
+        self._add_history(j, score, reason)
+        self._persist(j, score, reason, rep)
 
-    def _persist(self, final, score, method, reason, rep):
+    def _persist(self, final, score, reason, rep):
         cfg = self.ctx.cfg
         img_path = ""
         if rep is not None and rep.frame is not None and (
                 (final == "NG" and cfg.save_ng_images) or (final == "OK" and cfg.save_ok_images)):
             rep.judgement = final
-            annotated = draw_overlay(rep.frame.copy(), rep, cfg)
             try:
-                img_path = str(storage.save_inspection(rep, annotated))
+                img_path = str(storage.save_inspection(rep, draw_overlay(rep.frame.copy(), rep)))
             except OSError:
                 img_path = "(gagal disimpan)"
         if cfg.log_csv:
@@ -304,19 +278,16 @@ class InspectPage(QtWidgets.QWidget):
                 storage.append_log({
                     "waktu": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "hasil": final,
-                    "skor": f"{score:.4f}" if score is not None else "",
-                    "metode": method,
+                    "keyakinan_ulir": f"{score:.4f}" if score is not None else "",
                     "keterangan": reason,
-                    "radius_px": f"{rep.circle[2]:.1f}" if rep is not None and rep.circle else "",
                     "gambar": img_path,
                 })
             except OSError:
                 pass
 
-    def _add_history(self, final, score, method, reason):
+    def _add_history(self, final, score, reason):
         self.table.insertRow(0)
-        items = [time.strftime("%H:%M:%S"), final,
-                 f"{score * 100:.1f}%" if score is not None else "—", method]
+        items = [time.strftime("%H:%M:%S"), final, f"{score * 100:.1f}%" if score is not None else "asing"]
         for c, text in enumerate(items):
             it = QtWidgets.QTableWidgetItem(text)
             it.setTextAlignment(Qt.AlignCenter)
@@ -345,7 +316,8 @@ class InspectPage(QtWidgets.QWidget):
         self.btn_trigger.setEnabled(self.ctx.cfg.inspect_mode == "trigger")
         self.judge.set_state("", "—", "Profil diganti · tekan INSPEKSI atau Spasi")
         self._score_ema = None
-        self.score_bar.set(None, 0.5)
+        self.score_bar.set(None, self.ctx.cfg.ok_threshold)
+        self.preview.clear()
         self.reset_stats()
         self.mode.set_value(self.ctx.cfg.inspect_mode)
         self.on_config(self.ctx.cfg)
@@ -356,17 +328,9 @@ class InspectPage(QtWidgets.QWidget):
         self.table.setRowCount(0)
 
     def on_config(self, cfg):
-        self.n_geo1.setText("Radius lubang" if cfg.view_mode == "top" else "Jarak garis")
-        self.n_geo2.setVisible(cfg.view_mode != "top")
-        self.v_geo2.setVisible(cfg.view_mode != "top")
-        self.lbl_view.setText(
-            "Tampilan polar dinding lubang (pola garis berulang = ulir)" if cfg.view_mode == "top"
-            else "Dinding lubang yang diluruskan (garis mendatar berulang = ulir)")
         if self.mode.value() != cfg.inspect_mode:
             self.mode.set_value(cfg.inspect_mode)
-        if cfg.inspect_mode == "trigger":
-            self.lbl_mode_hint.setText(f"Setiap trigger merata-rata {cfg.trigger_frames} frame, "
-                                       "lalu hasil dihitung, dicatat ke log, dan disimpan.")
+        self._mode_hint(cfg)
 
     def on_fps(self, fps):
         self.video.badge = f"●  LIVE   {fps:.1f} FPS"

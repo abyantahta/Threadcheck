@@ -9,12 +9,9 @@ import os
 import sys
 
 # Muat library berat SEBELUM Qt. PySide6 memasang hook impor yang membaca kode sumber
-# setiap modul yang dimuat setelahnya; untuk scipy/scikit-learn hal ini bisa membuat
-# aplikasi lambat terbuka (bahkan puluhan detik).
-for _mod in ("numpy", "cv2", "scipy.signal", "joblib", "sklearn.svm", "sklearn.ensemble",
-             "sklearn.linear_model", "sklearn.model_selection", "sklearn.metrics",
-             "sklearn.neighbors", "sklearn.decomposition", "sklearn.preprocessing",
-             "sklearn.pipeline", "onnxruntime"):
+# setiap modul yang dimuat setelahnya; untuk library besar hal ini bisa membuat aplikasi
+# lambat terbuka (bahkan puluhan detik).
+for _mod in ("numpy", "cv2", "joblib", "onnxruntime"):
     try:
         importlib.import_module(_mod)
     except Exception:

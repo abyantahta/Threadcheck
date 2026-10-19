@@ -48,28 +48,10 @@ class AppConfig:
     # --- ROI (dinormalisasi 0..1: x, y, w, h) ---
     roi: tuple = (0.30, 0.20, 0.40, 0.60)
 
-    # --- Deteksi lubang (persen terhadap sisi terpendek ROI) ---
-    r_min_pct: float = 12.0
-    r_max_pct: float = 48.0
-    hough_sensitivity: int = 30            # param2 HoughCircles, makin kecil makin sensitif
-    band_inner: float = 0.55               # batas dalam area analisis (x radius lubang)
-    band_outer: float = 1.25               # batas luar area analisis (x radius lubang)
-    proc_max_side: int = 640               # ROI diperkecil ke ukuran ini untuk pemrosesan
-
-    # --- Sudut pandang kamera ---
-    view_mode: str = "oblique"             # oblique (sudut miring) | top (tegak lurus)
-    line_angle: float = 0.0                # arah garis ulir pada gambar (derajat, 0 = mendatar)
-    angle_search: float = 20.0             # pencarian sudut otomatis ±derajat (0 = mati, maks 90)
-    line_contrast: float = 5.0             # kontras minimum garis ulir (level abu-abu), metode Rule
-    rule_pitch_px: float = 0.0             # jarak garis ulir hasil kalibrasi (px ROI asli, 0 = belum)
-    rule_pitch_tol: float = 0.25           # toleransi jarak garis terhadap kalibrasi (±fraksi)
-
     # --- Keputusan ---
-    decision_method: str = "auto"          # auto | ml | rule
-    ok_threshold: float = 0.50             # ambang probabilitas ML untuk OK
-    rule_threshold: float = 0.55           # ambang skor rule-based untuk OK
+    ok_threshold: float = 0.50             # ambang probabilitas "berulir" untuk OK
     trigger_frames: int = 5                # jumlah frame dirata-rata per trigger
-    novelty_tolerance: float = 1.0         # toleransi "objek tidak dikenal" ML (0 = nonaktif)
+    novelty_tolerance: float = 1.0         # toleransi "objek tidak dikenal" (0 = nonaktif)
     continuous_smoothing: int = 5          # jumlah frame untuk menghaluskan tampilan kontinu
 
     # --- Penyimpanan ---
@@ -78,9 +60,7 @@ class AppConfig:
     log_csv: bool = True
 
     # --- Training ---
-    model_kind: str = "auto"               # auto | svm | rf | logreg | hgb | yolo
-    augment: bool = True
-    aug_per_image: int = 8
+    yolo_epochs: int = 40                  # jumlah epoch training YOLO26n-cls
 
     # --- UI ---
     inspect_mode: str = "trigger"          # trigger | continuous

@@ -1,5 +1,4 @@
 """Jendela utama: header, sidebar navigasi, dan halaman-halaman."""
-import threading
 import time
 
 from .. import __version__
@@ -66,7 +65,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.status_changed.connect(self._on_camera_status)
         self.worker.fps_changed.connect(self._on_fps)
 
-        self._view_mode = ctx.cfg.view_mode
         ctx.profile_changed.connect(self._on_profile_changed)
         self._refresh_profile_combo()
         ctx.config_changed.connect(self._on_config)
@@ -80,8 +78,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._on_model_changed()
         self.go(0)
         self.worker.start()
-        # muat scikit-learn di latar belakang agar tombol "Latih Model" langsung responsif
-        threading.Thread(target=_warmup_sklearn, daemon=True).start()
 
     # ------------------------------------------------------------------
     def _build_header(self):
@@ -235,7 +231,6 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
     def _on_frame(self, qimg, res):
         try:
-            self.ctx.recent.append(res)
             self.inspect.on_result(qimg, res)
             self.training.on_result(qimg, res)
         finally:
@@ -258,16 +253,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_config(self, cfg):
         self.inspect.on_config(cfg)
-        if cfg.view_mode != self._view_mode:
-            self._view_mode = cfg.view_mode
-            self.training.refresh_model_info(force=True)
 
     def _on_model_changed(self):
         m = self.ctx.models
         if m.is_ready():
             self.chip_model.set(f"Model: {m.summary()}", "ok")
         else:
-            self.chip_model.set("Model: belum dilatih (Rule)", "warn")
+            self.chip_model.set(f"Model: {m.summary().lower()}", "warn")
         self.training.refresh_model_info()
 
     def _tick(self):
@@ -286,12 +278,3 @@ class MainWindow(QtWidgets.QMainWindow):
             self.training._train.wait(5000)
         self.ctx.flush()
         super().closeEvent(e)
-
-
-def _warmup_sklearn():
-    import importlib
-    for mod in ("sklearn.ensemble", "sklearn.linear_model", "sklearn.model_selection", "sklearn.svm"):
-        try:
-            importlib.import_module(mod)
-        except Exception:
-            pass

@@ -4,10 +4,10 @@ from pathlib import Path
 from .. import storage
 from .. import config
 from ..config import CLASS_DISPLAY, CLASS_NG, CLASS_OK, AppConfig
-from ..model import MIN_PER_CLASS, MODEL_KINDS, format_report
+from ..model import MIN_PER_CLASS, format_report
 from ..qt import QtCore, QtGui, QtWidgets, Qt
-from ..vision import VIEW_MODES, DetectParams
 from ..workers import TrainWorker
+from ..yolo_backend import training_available
 from .widgets import (Card, StatTile, VideoView, button, label, scroll_panel, set_prop,
                       video_frame)
 
@@ -55,9 +55,9 @@ class TrainingPage(QtWidgets.QWidget):
 
         # Ambil sampel
         cap = Card("1 · Ambil sampel")
-        cap.body.addWidget(label("Letakkan part, pastikan lingkaran lubang terdeteksi di video, "
-                                 "lalu simpan sesuai kondisi sebenarnya. Variasikan posisi & cahaya "
-                                 "sedikit agar model lebih tangguh.", "hint", wrap=True))
+        cap.body.addWidget(label("Letakkan part, pastikan ulir terlihat jelas di dalam kotak ROI, lalu "
+                                 "simpan sesuai kondisi sebenarnya. Ambil dari banyak part berbeda dan "
+                                 "variasikan posisi sedikit agar model lebih tangguh.", "hint", wrap=True))
         row = QtWidgets.QHBoxLayout()
         self.btn_ok = button("＋ ULIR\nOK  ·  tombol 1", "ok", "lg")
         self.btn_ng = button("＋ TANPA ULIR\nNG  ·  tombol 2", "ng", "lg")
@@ -72,7 +72,7 @@ class TrainingPage(QtWidgets.QWidget):
         cnt.addWidget(self.t_ok)
         cnt.addWidget(self.t_ng)
         cap.body.addLayout(cnt)
-        self.lbl_capture = label("Disarankan ≥ 30 sampel per kelas.", "status", wrap=True)
+        self.lbl_capture = label("Disarankan ≥ 50 sampel per kelas.", "status", wrap=True)
         cap.body.addWidget(self.lbl_capture)
         pl.addWidget(cap)
 
@@ -120,24 +120,16 @@ class TrainingPage(QtWidgets.QWidget):
         form = QtWidgets.QFormLayout()
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(8)
-        self.cb_model = QtWidgets.QComboBox()
-        for k, v in MODEL_KINDS.items():
-            self.cb_model.addItem(v, k)
-        self.cb_model.setCurrentIndex(max(0, self.cb_model.findData(ctx.cfg.model_kind)))
-        self.cb_model.currentIndexChanged.connect(self._model_kind_changed)
-        form.addRow(label("Algoritma", "muted"), self.cb_model)
-        self.chk_aug = QtWidgets.QCheckBox("Augmentasi data")
-        self.chk_aug.setChecked(ctx.cfg.augment)
-        self.chk_aug.setToolTip("Membuat variasi gambar (rotasi, cahaya, blur, noise) agar model lebih tangguh")
-        self.sp_aug = QtWidgets.QSpinBox()
-        self.sp_aug.setRange(1, 30)
-        self.sp_aug.setValue(ctx.cfg.aug_per_image)
-        self.sp_aug.setSuffix("  variasi/gambar")
-        self.chk_aug.toggled.connect(lambda v: (self.ctx.update(augment=v), self.sp_aug.setEnabled(v)))
-        self.sp_aug.valueChanged.connect(lambda v: self.ctx.update(aug_per_image=v))
-        self.sp_aug.setEnabled(ctx.cfg.augment)
-        form.addRow(label("Data", "muted"), self.chk_aug)
-        form.addRow(label("Variasi", "muted"), self.sp_aug)
+        self.sp_epochs = QtWidgets.QSpinBox()
+        self.sp_epochs.setRange(10, 300)
+        self.sp_epochs.setSingleStep(10)
+        self.sp_epochs.setValue(ctx.cfg.yolo_epochs)
+        self.sp_epochs.setSuffix("  epoch")
+        self.sp_epochs.setToolTip("Lebih banyak epoch = training lebih lama, biasanya sedikit lebih akurat. "
+                                  "40 sudah cukup untuk dataset kecil.")
+        self.sp_epochs.valueChanged.connect(lambda v: self.ctx.update(yolo_epochs=v))
+        form.addRow(label("Model", "muted"), label("YOLO26n-cls", "value"))
+        form.addRow(label("Lama training", "muted"), self.sp_epochs)
         self.lbl_algo = label("", "hint", wrap=True)
         form.addRow(self.lbl_algo)
         tr.body.addLayout(form)
@@ -171,27 +163,13 @@ class TrainingPage(QtWidgets.QWidget):
         self.refresh_model_info()
         self._update_algo_hint()
 
-    def _model_kind_changed(self, *_):
-        kind = self.cb_model.currentData()
-        self.ctx.update(model_kind=kind)
-        self._update_algo_hint()
-
     def _update_algo_hint(self):
-        kind = self.cb_model.currentData()
-        is_yolo = kind == "yolo"
-        self.chk_aug.setEnabled(not is_yolo)
-        self.sp_aug.setEnabled(not is_yolo and self.chk_aug.isChecked())
-        if is_yolo:
-            from ..yolo_backend import training_available
-            if training_available():
-                self.lbl_algo.setText("YOLO26n-cls: paling akurat untuk foto part asli. Training ±5 menit di "
-                                      "laptop (jauh lebih lama di Raspberry Pi, disarankan latih di PC lalu "
-                                      "salin folder models/). Augmentasi diatur otomatis oleh YOLO.")
-            else:
-                self.lbl_algo.setText("⚠ Ultralytics belum terpasang (pip install ultralytics). Model YOLO "
-                                      "hasil training di PC tetap bisa dipakai di sini lewat ONNX.")
+        if training_available():
+            self.lbl_algo.setText("Training ±3–5 menit di laptop. Di Raspberry Pi jauh lebih lama: "
+                                  "disarankan latih di PC lalu salin folder profiles/ ke Pi.")
         else:
-            self.lbl_algo.setText("Model klasik: training cepat (±30 detik), ringan untuk Raspberry Pi.")
+            self.lbl_algo.setText("⚠ Ultralytics belum terpasang (pip install ultralytics). Model yang sudah "
+                                  "dilatih di PC tetap bisa dipakai di sini.")
 
     # ------------------------------------------------------------------
     def eventFilter(self, obj, ev):
@@ -205,19 +183,16 @@ class TrainingPage(QtWidgets.QWidget):
         self._last = res
         if not self.isVisible():
             return
-        if res.circle is not None:
-            self.lbl_detect.setText(f"✓ Lubang terdeteksi · r = {res.circle[2]:.1f} px")
-            set_prop(self.lbl_detect, "tone", "ok")
-        elif "period_px" in res.info:
-            strong = (res.rule_score or 0) >= self.ctx.cfg.rule_threshold
-            self.lbl_detect.setText(
-                f"{'Pola garis kuat' if strong else 'Pola garis lemah'} · jarak "
-                f"{res.info['period_px']:.1f} px · kontras {res.info.get('contrast', 0):.1f}")
-            set_prop(self.lbl_detect, "tone", "ok" if strong else "warn")
+        x, y, w, h = res.roi_px
+        if res.unknown:
+            self.lbl_detect.setText(f"ROI {w}×{h} px  ·  model: objek asing")
+            set_prop(self.lbl_detect, "tone", "warn")
+        elif res.score is not None:
+            self.lbl_detect.setText(f"ROI {w}×{h} px  ·  model: {res.score * 100:.0f}% berulir")
+            set_prop(self.lbl_detect, "tone", "ok" if res.judgement == "OK" else "ng")
         else:
-            self.lbl_detect.setText("✕ Lubang tidak terdeteksi" if self.ctx.cfg.view_mode == "top"
-                                    else "✕ ROI tidak bisa dianalisis")
-            set_prop(self.lbl_detect, "tone", "ng")
+            self.lbl_detect.setText(f"ROI {w}×{h} px")
+            set_prop(self.lbl_detect, "tone", "")
 
     def on_camera_status(self, connected, msg):
         if not connected:
@@ -233,10 +208,6 @@ class TrainingPage(QtWidgets.QWidget):
         if res is None or res.frame is None:
             self._status("Belum ada gambar dari kamera.", "ng")
             return
-        if res.band is None:
-            self._status("ROI tidak bisa dianalisis (lubang tidak terdeteksi), sampel TIDAK disimpan. "
-                         "Atur ROI, fokus, atau pencahayaan dulu.", "ng")
-            return
         x, y, w, h = res.roi_px
         crop = res.frame[y:y + h, x:x + w].copy()
         path = storage.save_sample(cls, crop)
@@ -251,10 +222,10 @@ class TrainingPage(QtWidgets.QWidget):
         self.t_ok.set(c[CLASS_OK])
         self.t_ng.set(c[CLASS_NG])
         ready = min(c.values()) >= MIN_PER_CLASS
-        self.btn_train.setEnabled(ready and self._train is None)
+        self.btn_train.setEnabled(ready and self._train is None and training_available())
         if not ready:
             self.lbl_train.setText(f"Butuh minimal {MIN_PER_CLASS} sampel per kelas untuk training "
-                                   "(disarankan ≥ 30).")
+                                   "(disarankan ≥ 50).")
         return c
 
     def _make_item(self, path: Path, cls):
@@ -325,15 +296,9 @@ class TrainingPage(QtWidgets.QWidget):
 
     def reload(self, cfg):
         """Muat ulang kontrol, dataset, dan info model (dipakai saat ganti profil)."""
-        for w in (self.cb_model, self.chk_aug, self.sp_aug):
-            w.blockSignals(True)
-        try:
-            self.cb_model.setCurrentIndex(max(0, self.cb_model.findData(cfg.model_kind)))
-            self.chk_aug.setChecked(cfg.augment)
-            self.sp_aug.setValue(cfg.aug_per_image)
-        finally:
-            for w in (self.cb_model, self.chk_aug, self.sp_aug):
-                w.blockSignals(False)
+        self.sp_epochs.blockSignals(True)
+        self.sp_epochs.setValue(cfg.yolo_epochs)
+        self.sp_epochs.blockSignals(False)
         self._update_algo_hint()
         self._last = None
         self.progress.setValue(0)
@@ -409,7 +374,8 @@ class TrainingPage(QtWidgets.QWidget):
         if not self.ctx.models.is_ready():
             return
         r = QtWidgets.QMessageBox.question(self, "Hapus model",
-                                           "Hapus model aktif? Inspeksi akan memakai metode Rule.")
+                                           "Hapus model profil ini? Inspeksi akan menampilkan N/A sampai "
+                                           "model dilatih ulang.")
         if r == QtWidgets.QMessageBox.Yes:
             self.ctx.models.delete()
             self.ctx.model_changed.emit()
@@ -419,29 +385,20 @@ class TrainingPage(QtWidgets.QWidget):
         m = self.ctx.models
         current = self.report.toPlainText()
         replaceable = force or not current or current.startswith(("Model aktif", "Belum ada"))
+        if not replaceable:
+            return
         if not m.is_ready():
-            if replaceable or current.startswith("Model terpilih"):
-                self.report.setPlainText("Belum ada model terlatih.\n\nLangkah:\n"
-                                         "  1. Ambil sampel ULIR dan TANPA ULIR\n"
-                                         "  2. Klik 'Latih Model'\n"
-                                         "  3. Model otomatis dipakai di halaman Inspeksi\n\n"
-                                         "Selama belum ada model, inspeksi memakai metode Rule.")
+            note = f"\n\n⚠ {m.load_error}" if m.load_error else ""
+            self.report.setPlainText("Belum ada model terlatih untuk profil ini.\n\nLangkah:\n"
+                                     "  1. Ambil sampel ULIR dan TANPA ULIR\n"
+                                     "  2. Klik 'Latih Model'\n"
+                                     "  3. Model otomatis dipakai di halaman Inspeksi\n\n"
+                                     "Selama belum ada model, inspeksi menampilkan N/A." + note)
             return
         meta = m.meta
-        txt = (f"Model aktif : {meta.get('model_name')}\n"
-               f"Dilatih     : {meta.get('trained_at')}\n"
-               f"Sampel      : ulir={meta.get('n_ok')}, tanpa ulir={meta.get('n_ng')}\n"
-               f"Akurasi CV  : {meta.get('cv_balanced_accuracy', 0) * 100:.1f}% (balanced)\n")
-        trained_p = meta.get("detect_params")
-        cur = DetectParams.from_config(self.ctx.cfg)
-        model_mode = meta.get("view_mode", "top")
-        txt += f"Mode        : {VIEW_MODES.get(model_mode, model_mode)}\n"
-        if model_mode != cur.view_mode:
-            txt += ("\n⚠ Model dilatih untuk sudut pandang lain dari pengaturan sekarang.\n"
-                    "  Latih ulang dengan sampel dari sudut pandang ini.\n")
-        elif model_mode == "top" and trained_p and (abs(trained_p["band_inner"] - cur.band_inner) > 1e-6
-                                                    or abs(trained_p["band_outer"] - cur.band_outer) > 1e-6):
-            txt += ("\n⚠ Pengaturan area analisis (band) berbeda dari saat training.\n"
-                    "  Latih ulang model agar hasil konsisten.\n")
-        if replaceable:
-            self.report.setPlainText(txt)
+        self.report.setPlainText(
+            f"Model aktif : {meta.get('model_name', 'YOLO26n-cls')} ({meta.get('epochs', '?')} epoch)\n"
+            f"Dilatih     : {meta.get('trained_at')}\n"
+            f"Sampel      : ulir={meta.get('n_ok')}, tanpa ulir={meta.get('n_ng')}\n"
+            f"Akurasi     : {meta.get('cv_balanced_accuracy', 0) * 100:.1f}% (validasi)\n"
+            f"Yakin ≥80%  : {meta.get('cv_confident', 0) * 100:.1f}% sampel\n")

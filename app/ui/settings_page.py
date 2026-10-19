@@ -1,7 +1,5 @@
-"""Halaman Pengaturan: kamera, deteksi lubang, keputusan, penyimpanan."""
+"""Halaman Pengaturan: profil kamera, kamera, keputusan, penyimpanan."""
 import platform
-
-import numpy as np
 
 import cv2
 
@@ -10,18 +8,10 @@ from ..camera import (BACKENDS, IS_WINDOWS, RESOLUTIONS, SOURCE_TYPES, list_open
                       list_picamera2_cameras)
 from .. import config
 from ..config import APP_NAME, BASE_DIR
-from ..vision import VIEW_MODES
 from ..qt import QT_API, QtWidgets, Qt
 from . import profiles as profile_actions
 from .training_page import open_folder
 from .widgets import Card, button, label, scroll_panel, set_prop
-
-DECISION_METHODS = {
-    "auto": "Otomatis (ML bila model ada, selain itu Rule)",
-    "ml": "Machine Learning saja",
-    "rule": "Rule-based saja (tanpa training)",
-}
-
 
 def _form():
     f = QtWidgets.QFormLayout()
@@ -145,129 +135,28 @@ class SettingsPage(QtWidgets.QWidget):
         cam.body.addStretch(1)
         grid.addWidget(cam, 1, 0)
 
-        # ================= Analisis ulir =================
-        det = Card("Analisis ulir")
-        f = _form()
-        self.cb_view = QtWidgets.QComboBox()
-        for k, v in VIEW_MODES.items():
-            self.cb_view.addItem(v, k)
-        self.cb_view.setCurrentIndex(max(0, self.cb_view.findData(cfg.view_mode)))
-        self.cb_view.currentIndexChanged.connect(self._view_changed)
-        f.addRow(label("Sudut pandang", "muted"), self.cb_view)
-        det.body.addLayout(f)
-
-        # --- parameter sudut miring ---
-        self.box_obl = QtWidgets.QWidget()
-        bl = QtWidgets.QVBoxLayout(self.box_obl)
-        bl.setContentsMargins(0, 4, 0, 0)
-        bl.setSpacing(8)
-        bl.addWidget(label("SUDUT MIRING", "cardTitle"))
-        bl.addWidget(label("Seret ROI tepat di dinding lubang tempat garis ulir terlihat "
-                           "(hindari bibir lubang & permukaan luar).", "hint", wrap=True))
-        fo = _form()
-        self.sp_angle = _spin(-90.0, 90.0, cfg.line_angle, 5, " °", 0)
-        self.sp_angle.setToolTip("Kemiringan garis ulir pada gambar. 0° = mendatar.")
-        self.sp_search = _spin(0.0, 90.0, cfg.angle_search, 5, " °", 0)
-        self.sp_search.setToolTip("Rentang pencarian otomatis di sekitar arah garis. 0 = tidak mencari.")
-        self.sp_contrast = _spin(0.5, 60.0, cfg.line_contrast, 0.5, "", 1)
-        self.sp_contrast.setToolTip("Kontras minimum garis ulir (level abu-abu) untuk metode Rule. "
-                                    "Bekas pahat pada lubang polos biasanya kontrasnya rendah.")
-        fo.addRow(label("Arah garis ulir", "muted"), self.sp_angle)
-        fo.addRow(label("Cari sudut otomatis ±", "muted"), self.sp_search)
-        fo.addRow(label("Kontras garis min.", "muted"), self.sp_contrast)
-        self.sp_pitch_tol = _spin(5.0, 60.0, cfg.rule_pitch_tol * 100, 5, " %", 0)
-        self.sp_pitch_tol.setToolTip("Seberapa jauh jarak garis boleh berbeda dari hasil kalibrasi.")
-        fo.addRow(label("Toleransi jarak garis ±", "muted"), self.sp_pitch_tol)
-        bl.addLayout(fo)
-
-        bl.addWidget(label("KALIBRASI RULE", "cardTitle"))
-        bl.addWidget(label("Tanpa kalibrasi, metode Rule tidak pernah menyatakan OK (garis sejajar bisa "
-                           "berasal dari benda apa saja). Letakkan part BERULIR di posisi inspeksi, lalu "
-                           "klik Kalibrasi: jarak garis ulirnya dijadikan acuan.", "hint", wrap=True))
-        crow = QtWidgets.QHBoxLayout()
-        self.btn_calib = button("Kalibrasi dari part OK", "primary")
-        self.btn_calib.clicked.connect(self.calibrate_rule)
-        self.btn_uncalib = button("Hapus")
-        self.btn_uncalib.clicked.connect(lambda: (self.ctx.update(rule_pitch_px=0.0), self._show_calib()))
-        crow.addWidget(self.btn_calib, 1)
-        crow.addWidget(self.btn_uncalib)
-        bl.addLayout(crow)
-        self.lbl_calib = label("", "status", wrap=True)
-        bl.addWidget(self.lbl_calib)
-        det.body.addWidget(self.box_obl)
-        self.sp_angle.valueChanged.connect(lambda v: self.ctx.update(line_angle=v))
-        self.sp_search.valueChanged.connect(lambda v: self.ctx.update(angle_search=v))
-        self.sp_contrast.valueChanged.connect(lambda v: self.ctx.update(line_contrast=v))
-        self.sp_pitch_tol.valueChanged.connect(lambda v: self.ctx.update(rule_pitch_tol=v / 100.0))
-
-        # --- parameter tegak lurus ---
-        self.box_top = QtWidgets.QWidget()
-        bt = QtWidgets.QVBoxLayout(self.box_top)
-        bt.setContentsMargins(0, 4, 0, 0)
-        bt.setSpacing(8)
-        bt.addWidget(label("TEGAK LURUS (TOP VIEW)", "cardTitle"))
-        bt.addWidget(label("Radius dalam persen terhadap sisi terpendek ROI. Area analisis "
-                           "(band) dalam kelipatan radius lubang.", "hint", wrap=True))
-        f = _form()
-        self.sp_rmin = _spin(2, 49, cfg.r_min_pct, 1, " %", 1)
-        self.sp_rmax = _spin(5, 50, cfg.r_max_pct, 1, " %", 1)
-        self.sp_hough = _spin(5, 150, cfg.hough_sensitivity, 1)
-        self.sp_hough.setToolTip("Semakin kecil semakin mudah mendeteksi lingkaran (tapi bisa salah deteksi)")
-        self.sp_in = _spin(0.20, 0.95, cfg.band_inner, 0.05, " × r", 2)
-        self.sp_out = _spin(1.02, 2.00, cfg.band_outer, 0.05, " × r", 2)
-        self.sp_proc = _spin(240, 1600, cfg.proc_max_side, 40, " px")
-        self.sp_proc.setToolTip("ROI diperkecil ke ukuran ini sebelum diproses (lebih kecil = lebih cepat)")
-        f.addRow(label("Radius minimum", "muted"), self.sp_rmin)
-        f.addRow(label("Radius maksimum", "muted"), self.sp_rmax)
-        f.addRow(label("Sensitivitas Hough", "muted"), self.sp_hough)
-        f.addRow(label("Band dalam", "muted"), self.sp_in)
-        f.addRow(label("Band luar", "muted"), self.sp_out)
-        f.addRow(label("Ukuran proses maks.", "muted"), self.sp_proc)
-        bt.addLayout(f)
-        det.body.addWidget(self.box_top)
-        self.sp_rmin.valueChanged.connect(lambda v: self.ctx.update(r_min_pct=v))
-        self.sp_rmax.valueChanged.connect(lambda v: self.ctx.update(r_max_pct=v))
-        self.sp_hough.valueChanged.connect(lambda v: self.ctx.update(hough_sensitivity=v))
-        self.sp_in.valueChanged.connect(lambda v: self.ctx.update(band_inner=v))
-        self.sp_out.valueChanged.connect(lambda v: self.ctx.update(band_outer=v))
-        self.sp_proc.valueChanged.connect(lambda v: self.ctx.update(proc_max_side=v))
-        det.body.addStretch(1)
-        grid.addWidget(det, 1, 1)
-        self._view_changed(update=False)
-        self._show_calib()
-
         # ================= Keputusan =================
         dec = Card("Keputusan OK / NG")
         f = _form()
-        self.cb_method = QtWidgets.QComboBox()
-        for k, v in DECISION_METHODS.items():
-            self.cb_method.addItem(v, k)
-        self.cb_method.setCurrentIndex(max(0, self.cb_method.findData(cfg.decision_method)))
-        self.cb_method.currentIndexChanged.connect(
-            lambda: self.ctx.update(decision_method=self.cb_method.currentData()))
         self.sp_thr_ml = _spin(0.05, 0.99, cfg.ok_threshold, 0.05, "", 2)
         self.sp_thr_ml.setToolTip("Probabilitas minimal 'berulir' agar dinyatakan OK. "
                                   "Naikkan untuk lebih ketat (mengurangi part tanpa ulir yang lolos).")
-        self.sp_thr_rule = _spin(0.05, 0.99, cfg.rule_threshold, 0.05, "", 2)
         self.sp_trig = _spin(1, 30, cfg.trigger_frames, 1, "  frame")
         self.sp_novelty = _spin(0.0, 5.0, cfg.novelty_tolerance, 0.1, " ×", 1)
         self.sp_novelty.setToolTip("Gambar yang terlalu berbeda dari sampel training dinyatakan NG "
                                    "'objek tidak dikenal'. Lebih besar = lebih longgar, 0 = nonaktif.")
         self.sp_smooth = _spin(1, 30, cfg.continuous_smoothing, 1, "  frame")
-        f.addRow(label("Metode", "muted"), self.cb_method)
-        f.addRow(label("Ambang OK (ML)", "muted"), self.sp_thr_ml)
-        f.addRow(label("Ambang OK (Rule)", "muted"), self.sp_thr_rule)
+        f.addRow(label("Ambang OK", "muted"), self.sp_thr_ml)
         f.addRow(label("Toleransi objek asing", "muted"), self.sp_novelty)
         f.addRow(label("Frame per trigger", "muted"), self.sp_trig)
         f.addRow(label("Penghalusan kontinu", "muted"), self.sp_smooth)
         dec.body.addLayout(f)
         self.sp_thr_ml.valueChanged.connect(lambda v: self.ctx.update(ok_threshold=v))
-        self.sp_thr_rule.valueChanged.connect(lambda v: self.ctx.update(rule_threshold=v))
         self.sp_trig.valueChanged.connect(lambda v: self.ctx.update(trigger_frames=v))
         self.sp_novelty.valueChanged.connect(lambda v: self.ctx.update(novelty_tolerance=v))
         self.sp_smooth.valueChanged.connect(lambda v: self.ctx.update(continuous_smoothing=v))
         dec.body.addStretch(1)
-        grid.addWidget(dec, 2, 1)
+        grid.addWidget(dec, 1, 1)
 
         # ================= Penyimpanan =================
         sto = Card("Penyimpanan & log")
@@ -301,8 +190,8 @@ class SettingsPage(QtWidgets.QWidget):
             f"Sistem: {platform.system()} {platform.machine()}\n"
             f"Folder aplikasi: {BASE_DIR}", "hint", wrap=True))
         info.body.addStretch(1)
-        grid.addWidget(info, 3, 0, 1, 2)
-        grid.setRowStretch(4, 1)
+        grid.addWidget(info, 2, 1)
+        grid.setRowStretch(3, 1)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
 
@@ -337,10 +226,8 @@ class SettingsPage(QtWidgets.QWidget):
 
     def reload(self, cfg):
         """Isi ulang semua kontrol dari konfigurasi (dipakai saat ganti profil)."""
-        widgets = [self.cb_source, self.cb_device, self.cb_backend, self.cb_res, self.ed_file, self.cb_view,
-                   self.sp_angle, self.sp_search, self.sp_contrast, self.sp_pitch_tol, self.sp_rmin,
-                   self.sp_rmax, self.sp_hough, self.sp_in, self.sp_out, self.sp_proc, self.cb_method,
-                   self.sp_thr_ml, self.sp_thr_rule, self.sp_novelty, self.sp_trig, self.sp_smooth,
+        widgets = [self.cb_source, self.cb_device, self.cb_backend, self.cb_res, self.ed_file,
+                   self.sp_thr_ml, self.sp_novelty, self.sp_trig, self.sp_smooth,
                    self.chk_ng, self.chk_ok, self.chk_log]
         for w in widgets:
             w.blockSignals(True)
@@ -355,20 +242,7 @@ class SettingsPage(QtWidgets.QWidget):
                 self.cb_res.addItem(f"{res[0]} × {res[1]}", res)
             self.cb_res.setCurrentIndex(self.cb_res.findData(res))
             self.ed_file.setText(cfg.camera_file)
-            self.cb_view.setCurrentIndex(max(0, self.cb_view.findData(cfg.view_mode)))
-            self.sp_angle.setValue(cfg.line_angle)
-            self.sp_search.setValue(cfg.angle_search)
-            self.sp_contrast.setValue(cfg.line_contrast)
-            self.sp_pitch_tol.setValue(cfg.rule_pitch_tol * 100)
-            self.sp_rmin.setValue(cfg.r_min_pct)
-            self.sp_rmax.setValue(cfg.r_max_pct)
-            self.sp_hough.setValue(cfg.hough_sensitivity)
-            self.sp_in.setValue(cfg.band_inner)
-            self.sp_out.setValue(cfg.band_outer)
-            self.sp_proc.setValue(cfg.proc_max_side)
-            self.cb_method.setCurrentIndex(max(0, self.cb_method.findData(cfg.decision_method)))
             self.sp_thr_ml.setValue(cfg.ok_threshold)
-            self.sp_thr_rule.setValue(cfg.rule_threshold)
             self.sp_novelty.setValue(cfg.novelty_tolerance)
             self.sp_trig.setValue(cfg.trigger_frames)
             self.sp_smooth.setValue(cfg.continuous_smoothing)
@@ -379,50 +253,8 @@ class SettingsPage(QtWidgets.QWidget):
             for w in widgets:
                 w.blockSignals(False)
         self._source_changed()
-        self._view_changed(update=False)
-        self._show_calib()
         self.refresh_profiles()
         self._cam_status("Menghubungkan kamera profil…", "warn")
-    def _show_calib(self):
-        pitch = self.ctx.cfg.rule_pitch_px
-        if pitch > 0:
-            self.lbl_calib.setText(f"Terkalibrasi: jarak garis {pitch:.1f} px "
-                                   f"(±{self.ctx.cfg.rule_pitch_tol * 100:.0f}%)")
-            set_prop(self.lbl_calib, "tone", "ok")
-        else:
-            self.lbl_calib.setText("Belum dikalibrasi: metode Rule menampilkan N/A")
-            set_prop(self.lbl_calib, "tone", "warn")
-
-    def calibrate_rule(self):
-        """Ambil median jarak garis dari frame-frame terakhir yang menunjukkan pola garis."""
-        minc = self.ctx.cfg.line_contrast
-        res = [r for r in list(self.ctx.recent)
-               if r.info.get("period_px")
-               and ((r.info.get("lines", 0) >= 2 and r.info.get("ridge_h", 0) >= minc)
-                    or r.info.get("periodic", 0) > 0.3)]
-        if len(res) < 3:
-            self.lbl_calib.setText("Kalibrasi gagal: garis ulir tidak terbaca. Pastikan part BERULIR "
-                                   "terlihat jelas di ROI dan kamera aktif.")
-            set_prop(self.lbl_calib, "tone", "ng")
-            return
-        periods = np.array([r.info["period_px"] for r in res])
-        med = float(np.median(periods))
-        spread = float(np.median(np.abs(periods - med)) / (med + 1e-6))
-        if spread > 0.15:
-            self.lbl_calib.setText(f"Kalibrasi gagal: jarak garis tidak stabil (variasi {spread * 100:.0f}%). "
-                                   "Pastikan part diam dan fokus tajam.")
-            set_prop(self.lbl_calib, "tone", "ng")
-            return
-        self.ctx.update(rule_pitch_px=round(med, 2))
-        self._show_calib()
-
-    def _view_changed(self, *_, update=True):
-        mode = self.cb_view.currentData()
-        self.box_obl.setVisible(mode != "top")
-        self.box_top.setVisible(mode == "top")
-        if update and mode != self.ctx.cfg.view_mode:
-            self.ctx.update(view_mode=mode)
-
     def _source_changed(self):
         src = self.cb_source.currentData()
         is_cv, is_pi, is_file = src == "opencv", src == "picamera2", src == "file"
@@ -459,7 +291,7 @@ class SettingsPage(QtWidgets.QWidget):
 
     def pick_file(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Pilih file simulasi", str(BASE_DIR / "demo_data"),
+            self, "Pilih file simulasi", str(BASE_DIR),
             "Video / gambar (*.mp4 *.avi *.mov *.mkv *.png *.jpg *.jpeg *.bmp)")
         if path:
             self.ed_file.setText(path)
